@@ -111,7 +111,8 @@
                             <div class="flex items-center gap-1.5">
                                 <p id="display-emp-name" class="font-semibold text-sm text-white truncate">Pilih / Isi Data Karyawan</p>
                             </div>
-                            <p id="display-emp-meta" class="text-xs text-indigo-200 truncate mt-0.5">NIK: - • Divisi: -</p>
+                            <p id="display-emp-meta" class="text-xs text-indigo-200 truncate mt-0.5">ID: - • Organization: -</p>
+                            <p id="display-emp-pos" class="text-[11px] text-indigo-300 truncate">Job Position: -</p>
                         </div>
                     </div>
                     <button onclick="openProfileModal()" class="p-2 bg-white/15 hover:bg-white/25 rounded-xl text-white transition shrink-0" title="Ganti / Isi Profil Karyawan">
@@ -193,14 +194,17 @@
                     <!-- Mini Map -->
                     <div id="mini-map" class="w-full h-32 rounded-xl bg-slate-100 border border-slate-200 overflow-hidden mb-2.5"></div>
 
-                    <div class="flex items-start justify-between gap-2 text-xs">
-                        <div class="min-w-0 flex-1">
-                            <p id="gps-coords" class="font-mono text-[11px] text-slate-600 font-medium">Lat: -, Lng: -</p>
-                            <p id="gps-address" class="text-[11px] text-slate-500 line-clamp-2 mt-0.5">Mengambil informasi lokasi...</p>
+                    <div class="space-y-2 text-xs">
+                        <div class="flex items-center justify-between gap-2">
+                            <p id="gps-coords" class="font-mono text-[11px] text-slate-600 font-medium">Coordinate: -, -</p>
+                            <span id="radius-badge" class="shrink-0 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600">
+                                Cek Radius...
+                            </span>
                         </div>
-                        <span id="radius-badge" class="shrink-0 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600">
-                            Cek Radius...
-                        </span>
+                        <div>
+                            <label for="gps-address-input" class="block text-[10px] font-semibold text-slate-400 mb-0.5">Location Address (Otomatis GPS / Dapat Diedit)</label>
+                            <input type="text" id="gps-address-input" value="Mengambil alamat lokasi..." class="w-full text-[11px] text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-talenta-500">
+                        </div>
                     </div>
                 </div>
 
@@ -225,7 +229,7 @@
                     </div>
 
                     <div>
-                        <label for="attendance-note" class="block text-xs font-bold text-slate-700 mb-1.5">Catatan Kehadiran <span class="font-normal text-slate-400">(Opsional)</span></label>
+                        <label for="attendance-note" class="block text-xs font-bold text-slate-700 mb-1.5">Description / Catatan <span class="font-normal text-slate-400">(Opsional)</span></label>
                         <input type="text" id="attendance-note" placeholder="Contoh: Kunjungan klien, WFH sesuai jadwal, dll." class="w-full text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-talenta-500 focus:ring-2 focus:ring-indigo-100 bg-slate-50/50">
                     </div>
 
@@ -323,39 +327,76 @@
                         </div>
                         <p class="text-[11px] text-slate-500 mb-2">
                             1. Buka Google Sheets baru &rarr; Klik menu <b>Ekstensi (Extensions) &gt; Apps Script</b>.<br>
-                            2. Hapus kode lama, tempel kode di bawah, lalu klik <b>Deploy &gt; New deployment &gt; Web app</b> (Akses: <i>Anyone</i>).<br>
+                            2. Hapus kode lama di <code>Code.gs</code>, tempel kode di bawah (sudah sesuai <b>10 kolom standar Talenta</b> + Link Foto Drive), lalu klik <b>Deploy &gt; New deployment &gt; Web app</b> (Akses: <i>Anyone</i>).<br>
                             3. Salin URL Web App yang muncul ke kolom di atas.
                         </p>
-                        <textarea id="apps-script-code" readonly rows="6" class="w-full text-[11px] font-mono bg-slate-900 text-emerald-300 p-3 rounded-xl border border-slate-700 focus:outline-none">function doPost(e) {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-  if (sheet.getLastRow() === 0) {
-    sheet.appendRow([
-      "Timestamp Server", "Tanggal", "Jam (WIB)", "NIK", "Nama Karyawan", 
-      "Divisi", "Tipe Absen", "Status Ketepatan", "Mode Kerja", 
-      "Koordinat GPS", "Jarak Kantor (m)", "Status Radius", "Alamat Lokasi", "Catatan"
-    ]);
+                        <textarea id="apps-script-code" readonly rows="8" class="w-full text-[11px] font-mono bg-slate-900 text-emerald-300 p-3 rounded-xl border border-slate-700 focus:outline-none">const FOLDER_FOTO_NAMA = "Foto_Absensi_Talenta";
+
+function doPost(e) {
+  var lock = LockService.getScriptLock();
+  lock.tryLock(10000);
+  try {
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+    if (sheet.getLastRow() === 0) {
+      var headers = [
+        "Date", "Check Time", "Type", "Employee ID", "Full Name",
+        "Organization", "Job Position", "Location Address", "Location Coordinate", "Description", "Photo URL"
+      ];
+      sheet.appendRow(headers);
+      sheet.getRange(1, 1, 1, headers.length).setFontWeight("bold").setBackground("#1E293B").setFontColor("#FFFFFF");
+      sheet.setFrozenRows(1);
+    }
+
+    var data = JSON.parse(e.postData.contents);
+    var photoUrl = "-";
+    if (data.photo && data.photo.indexOf("data:image") === 0) {
+      photoUrl = simpanFotoKeDrive(data.photo, data.employeeId, data.fullName, data.type, data.date);
+    }
+
+    var nextRow = sheet.getLastRow() + 1;
+    // Paksa format teks (@) pada Employee ID agar angka 0 di depan (mis. 010120301) tidak hilang
+    sheet.getRange(nextRow, 4).setNumberFormat("@");
+
+    sheet.getRange(nextRow, 1, 1, 11).setValues([[
+      data.date,
+      data.checkTime,
+      data.type,
+      String(data.employeeId),
+      data.fullName,
+      data.organization,
+      data.jobPosition,
+      data.locationAddress,
+      data.locationCoordinate,
+      data.description,
+      photoUrl
+    ]]);
+
+    return ContentService.createTextOutput(JSON.stringify({ "status": "success", "photoUrl": photoUrl }))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({ "status": "error", "message": err.toString() }))
+      .setMimeType(ContentService.MimeType.JSON);
+  } finally {
+    lock.releaseLock();
   }
-  
-  var data = JSON.parse(e.postData.contents);
-  sheet.appendRow([
-    new Date(),
-    data.tanggal,
-    data.jam,
-    data.nik,
-    data.nama,
-    data.divisi,
-    data.tipeAbsen,
-    data.statusKetepatan,
-    data.modeKerja,
-    data.koordinat,
-    data.jarakMeter,
-    data.statusRadius,
-    data.alamat,
-    data.catatan
-  ]);
-  
-  return ContentService.createTextOutput(JSON.stringify({ "status": "success" }))
-    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function simpanFotoKeDrive(base64Data, empId, fullName, type, dateStr) {
+  try {
+    var folders = DriveApp.getFoldersByName(FOLDER_FOTO_NAMA);
+    var folder = folders.hasNext() ? folders.next() : DriveApp.createFolder(FOLDER_FOTO_NAMA);
+    var splitData = base64Data.split(",");
+    var contentType = splitData[0].match(/:(.*?);/)[1];
+    var bytes = Utilities.base64Decode(splitData[1]);
+    var cleanName = String(fullName).replace(/[^a-zA-Z0-9]/g, "_");
+    var timestamp = Utilities.formatDate(new Date(), "Asia/Jakarta", "HHmmss");
+    var fileName = dateStr + "_" + timestamp + "_" + empId + "_" + cleanName + "_" + type.replace(/\s+/g, "") + ".jpg";
+    var file = folder.createFile(Utilities.newBlob(bytes, contentType, fileName));
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    return file.getUrl();
+  } catch (e) {
+    return "Error: " + e.toString();
+  }
 }</textarea>
                     </div>
                 </div>
@@ -455,25 +496,31 @@
                     <label class="block text-xs font-bold text-slate-700 mb-1">Pilih Cepat Karyawan (Preset)</label>
                     <select id="preset-employee" onchange="applyPresetEmployee()" class="w-full text-xs px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:outline-none focus:border-talenta-500">
                         <option value="">-- Ketik Manual di Bawah / Pilih Preset --</option>
-                        <option value="EMP-001|Budi Santoso|Finance & Accounting">EMP-001 - Budi Santoso (Finance & Accounting)</option>
-                        <option value="EMP-002|Siti Aminah|Admin Sales">EMP-002 - Siti Aminah (Admin Sales)</option>
-                        <option value="EMP-003|Rizky Pratama|ITDS Department">EMP-003 - Rizky Pratama (ITDS Department)</option>
-                        <option value="EMP-004|Dewi Lestari|Human Resources">EMP-004 - Dewi Lestari (Human Resources)</option>
+                        <option value="010120301|Agung Surya Pratama|Sales|Sales Executive">010120301 - Agung Surya Pratama (Sales - Sales Executive)</option>
+                        <option value="010120302|Budi Santoso|Finance|Finance & Accounting Staff">010120302 - Budi Santoso (Finance - Finance & Accounting Staff)</option>
+                        <option value="010120303|Siti Aminah|Sales|Admin Sales">010120303 - Siti Aminah (Sales - Admin Sales)</option>
+                        <option value="010120304|Rizky Pratama|ITDS|IT Support & Infrastructure">010120304 - Rizky Pratama (ITDS - IT Support & Infrastructure)</option>
                     </select>
                 </div>
 
                 <div class="space-y-2.5">
                     <div>
-                        <label class="block text-xs font-bold text-slate-700 mb-1">NIK / ID Karyawan *</label>
-                        <input type="text" id="input-nik" placeholder="Contoh: 20260105" class="w-full text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-talenta-500">
+                        <label class="block text-xs font-bold text-slate-700 mb-1">Employee ID *</label>
+                        <input type="text" id="input-nik" placeholder="Contoh: 010120301" class="w-full text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-talenta-500 font-mono">
                     </div>
                     <div>
-                        <label class="block text-xs font-bold text-slate-700 mb-1">Nama Lengkap *</label>
-                        <input type="text" id="input-name" placeholder="Masukkan nama lengkap Anda" class="w-full text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-talenta-500">
+                        <label class="block text-xs font-bold text-slate-700 mb-1">Full Name *</label>
+                        <input type="text" id="input-name" placeholder="Contoh: Agung Surya Pratama" class="w-full text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-talenta-500">
                     </div>
-                    <div>
-                        <label class="block text-xs font-bold text-slate-700 mb-1">Divisi / Departemen *</label>
-                        <input type="text" id="input-dept" placeholder="Contoh: Finance, Sales, Operasional" class="w-full text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-talenta-500">
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">Organization *</label>
+                            <input type="text" id="input-dept" placeholder="Contoh: Sales" class="w-full text-xs px-3 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-talenta-500">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">Job Position *</label>
+                            <input type="text" id="input-pos" placeholder="Contoh: Sales Executive" class="w-full text-xs px-3 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-talenta-500">
+                        </div>
                     </div>
                 </div>
 
@@ -562,6 +609,7 @@
                         <span id="detail-status" class="px-2 py-0.5 rounded-md font-semibold bg-emerald-50 text-emerald-700">Tepat Waktu</span>
                     </div>
                     <p id="detail-emp" class="font-semibold text-slate-700">-</p>
+                    <p id="detail-pos" class="text-slate-600">-</p>
                     <p id="detail-time" class="text-slate-500">-</p>
                     <p id="detail-loc" class="text-slate-500">-</p>
                     <p id="detail-note" class="text-slate-600 italic bg-slate-50 p-2 rounded-lg border border-slate-100">-</p>
@@ -598,9 +646,10 @@
 
         let appState = {
             profile: {
-                nik: '',
-                name: '',
-                dept: ''
+                employeeId: '',
+                fullName: '',
+                organization: '',
+                jobPosition: ''
             },
             config: {
                 gsheetUrl: '',
@@ -644,7 +693,7 @@
             updateSyncStatusBadge();
 
             // Jika profil belum diisi, tampilkan modal identitas otomatis
-            if (!appState.profile.name || !appState.profile.nik) {
+            if (!appState.profile.fullName || !appState.profile.employeeId) {
                 setTimeout(() => openProfileModal(), 400);
             }
         };
@@ -652,7 +701,15 @@
         function loadFromStorage() {
             try {
                 const savedProfile = localStorage.getItem(STORAGE_KEYS.PROFILE);
-                if (savedProfile) appState.profile = JSON.parse(savedProfile);
+                if (savedProfile) {
+                    const parsed = JSON.parse(savedProfile);
+                    appState.profile = {
+                        employeeId: parsed.employeeId || parsed.nik || '',
+                        fullName: parsed.fullName || parsed.name || '',
+                        organization: parsed.organization || parsed.dept || '',
+                        jobPosition: parsed.jobPosition || parsed.pos || ''
+                    };
+                }
 
                 const savedConfig = localStorage.getItem(STORAGE_KEYS.CONFIG);
                 if (savedConfig) appState.config = { ...appState.config, ...JSON.parse(savedConfig) };
@@ -773,7 +830,7 @@
                     appState.gps.distance = dist;
                     appState.gps.inRadius = dist <= parseFloat(appState.config.radiusMeter);
 
-                    document.getElementById('gps-coords').textContent = `Lat: ${lat.toFixed(6)}, Lng: ${lng.toFixed(6)}`;
+                    document.getElementById('gps-coords').textContent = `Coordinate: ${lat.toFixed(6)}, ${lng.toFixed(6)}`;
                     accEl.textContent = `Akurasi ±${acc}m • Jarak ke kantor: ${dist}m`;
 
                     if (appState.gps.inRadius) {
@@ -796,19 +853,20 @@
                     }
 
                     // Reverse Geocoding (OpenStreetMap Nominatim)
+                    const addrInput = document.getElementById('gps-address-input');
                     try {
                         const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`);
                         const data = await res.json();
                         if (data && data.display_name) {
                             appState.gps.address = data.display_name;
-                            document.getElementById('gps-address').textContent = data.display_name;
+                            addrInput.value = data.display_name;
                         } else {
-                            appState.gps.address = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
-                            document.getElementById('gps-address').textContent = appState.gps.address;
+                            appState.gps.address = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+                            addrInput.value = appState.gps.address;
                         }
                     } catch (err) {
-                        appState.gps.address = `Koordinat (${lat.toFixed(5)}, ${lng.toFixed(5)})`;
-                        document.getElementById('gps-address').textContent = appState.gps.address;
+                        appState.gps.address = `Koordinat (${lat.toFixed(6)}, ${lng.toFixed(6)})`;
+                        addrInput.value = appState.gps.address;
                     }
                 },
                 (error) => {
@@ -816,6 +874,7 @@
                     accEl.textContent = 'Gagal mengakses GPS. Aktifkan izin lokasi.';
                     badgeEl.className = 'shrink-0 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-rose-50 text-rose-700';
                     badgeEl.textContent = 'GPS Mati';
+                    document.getElementById('gps-address-input').value = 'GPS tidak aktif';
                     showToast('Mohon aktifkan izin Lokasi (GPS) pada browser Anda.', 'error');
                 },
                 { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
@@ -840,9 +899,10 @@
         // 5. EMPLOYEE PROFILE & WORK MODE
         // ==========================================
         function openProfileModal() {
-            document.getElementById('input-nik').value = appState.profile.nik || '';
-            document.getElementById('input-name').value = appState.profile.name || '';
-            document.getElementById('input-dept').value = appState.profile.dept || '';
+            document.getElementById('input-nik').value = appState.profile.employeeId || '';
+            document.getElementById('input-name').value = appState.profile.fullName || '';
+            document.getElementById('input-dept').value = appState.profile.organization || '';
+            document.getElementById('input-pos').value = appState.profile.jobPosition || '';
             document.getElementById('profile-modal').classList.remove('hidden');
         }
 
@@ -853,40 +913,44 @@
         function applyPresetEmployee() {
             const val = document.getElementById('preset-employee').value;
             if (!val) return;
-            const [nik, name, dept] = val.split('|');
-            document.getElementById('input-nik').value = nik;
-            document.getElementById('input-name').value = name;
-            document.getElementById('input-dept').value = dept;
+            const [employeeId, fullName, organization, jobPosition] = val.split('|');
+            document.getElementById('input-nik').value = employeeId;
+            document.getElementById('input-name').value = fullName;
+            document.getElementById('input-dept').value = organization;
+            document.getElementById('input-pos').value = jobPosition || '';
         }
 
         function saveEmployeeProfile() {
-            const nik = document.getElementById('input-nik').value.trim();
-            const name = document.getElementById('input-name').value.trim();
-            const dept = document.getElementById('input-dept').value.trim();
+            const employeeId = document.getElementById('input-nik').value.trim();
+            const fullName = document.getElementById('input-name').value.trim();
+            const organization = document.getElementById('input-dept').value.trim();
+            const jobPosition = document.getElementById('input-pos').value.trim();
 
-            if (!nik || !name || !dept) {
-                showToast('Harap lengkapi NIK, Nama Lengkap, dan Divisi.', 'error');
+            if (!employeeId || !fullName || !organization || !jobPosition) {
+                showToast('Harap lengkapi Employee ID, Full Name, Organization, dan Job Position.', 'error');
                 return;
             }
 
-            appState.profile = { nik, name, dept };
+            appState.profile = { employeeId, fullName, organization, jobPosition };
             localStorage.setItem(STORAGE_KEYS.PROFILE, JSON.stringify(appState.profile));
             renderProfile();
             renderTodaySummary();
             closeProfileModal();
-            showToast(`Profil ${name} berhasil disimpan.`, 'success');
+            showToast(`Profil ${fullName} berhasil disimpan.`, 'success');
         }
 
         function renderProfile() {
-            const { nik, name, dept } = appState.profile;
-            if (name) {
-                document.getElementById('display-emp-name').textContent = name;
-                document.getElementById('display-emp-meta').textContent = `NIK: ${nik} • ${dept}`;
-                const initials = name.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
+            const { employeeId, fullName, organization, jobPosition } = appState.profile;
+            if (fullName) {
+                document.getElementById('display-emp-name').textContent = fullName;
+                document.getElementById('display-emp-meta').textContent = `ID: ${employeeId} • ${organization}`;
+                document.getElementById('display-emp-pos').textContent = `${jobPosition || '-'}`;
+                const initials = fullName.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
                 document.getElementById('emp-avatar').textContent = initials || 'KR';
             } else {
                 document.getElementById('display-emp-name').textContent = 'Klik Ikon Kanan Isi Profil';
-                document.getElementById('display-emp-meta').textContent = 'NIK: - • Divisi: -';
+                document.getElementById('display-emp-meta').textContent = 'ID: - • Organization: -';
+                document.getElementById('display-emp-pos').textContent = 'Job Position: -';
                 document.getElementById('emp-avatar').textContent = '?';
             }
         }
@@ -906,7 +970,7 @@
         // 6. SELFIE CAMERA & WATERMARKING
         // ==========================================
         function initiateAttendance(actionType) {
-            if (!appState.profile.name || !appState.profile.nik) {
+            if (!appState.profile.fullName || !appState.profile.employeeId) {
                 showToast('Silakan isi Identitas Karyawan terlebih dahulu.', 'error');
                 openProfileModal();
                 return;
@@ -1030,7 +1094,7 @@
         }
 
         function drawWatermarkOnCanvas(ctx, width, height) {
-            const { dateStr, timeStr } = getJakartaDateTimeParts();
+            const { isoDate, timeStr } = getJakartaDateTimeParts();
             const barHeight = Math.max(85, height * 0.16);
 
             // Overlay gelap di bagian bawah foto
@@ -1044,17 +1108,17 @@
 
             ctx.fillStyle = '#ffffff';
             ctx.font = `bold ${fontSizeTitle}px sans-serif`;
-            ctx.fillText(`${appState.pendingAction.toUpperCase()} • ${appState.profile.name} (${appState.profile.nik})`, padding, yPos);
+            ctx.fillText(`${appState.pendingAction.toUpperCase()} • ${appState.profile.fullName} (${appState.profile.employeeId})`, padding, yPos);
 
             yPos += fontSizeSub + 6;
             ctx.fillStyle = '#93c5fd';
             ctx.font = `600 ${fontSizeSub}px monospace`;
-            ctx.fillText(`${dateStr} ${timeStr} WIB | Mode: ${appState.workMode}`, padding, yPos);
+            ctx.fillText(`${isoDate} ${timeStr} WIB | ${appState.profile.organization} - ${appState.profile.jobPosition}`, padding, yPos);
 
             yPos += fontSizeSub + 5;
             ctx.fillStyle = '#cbd5e1';
             ctx.font = `${fontSizeSub - 1}px monospace`;
-            const coordText = `GPS: ${appState.gps.lat?.toFixed(5)}, ${appState.gps.lng?.toFixed(5)} (${appState.gps.inRadius ? 'Dalam Radius' : 'Luar Radius'})`;
+            const coordText = `GPS: ${appState.gps.lat?.toFixed(6)}, ${appState.gps.lng?.toFixed(6)} (${appState.workMode})`;
             ctx.fillText(coordText, padding, yPos);
         }
 
@@ -1071,32 +1135,40 @@
             btn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i><span>Menyimpan...</span>`;
             lucide.createIcons();
 
-            const { dateStr, timeStr, isoDate } = getJakartaDateTimeParts();
-            const note = document.getElementById('attendance-note').value.trim();
+            const { timeStr, isoDate } = getJakartaDateTimeParts();
+            const rawNote = document.getElementById('attendance-note').value.trim();
+            const editedAddress = document.getElementById('gps-address-input').value.trim() || appState.gps.address;
 
             // Evaluasi ketepatan waktu (khusus Clock In)
-            let punctuality = 'Selesai Kerja';
+            let punctuality = 'Pulang';
             if (appState.pendingAction === 'Clock In') {
                 const currentHHMM = timeStr.slice(0, 5);
                 punctuality = currentHHMM > appState.config.shiftStart ? 'Terlambat' : 'Tepat Waktu';
             }
 
+            // Susun Description sesuai standar Talenta + catatan user
+            const statusTag = appState.pendingAction === 'Clock In' ? `[${punctuality}]` : `[${appState.workMode}]`;
+            const fullDescription = rawNote ? `${statusTag} (${appState.workMode}) ${rawNote}` : `${statusTag} (${appState.workMode}) - ${appState.gps.inRadius ? 'Dalam Radius Kantor' : 'Luar Radius'}`;
+            const coordString = `${appState.gps.lat.toFixed(6)}, ${appState.gps.lng.toFixed(6)}`;
+
             const record = {
                 id: 'ATT-' + Date.now(),
-                isoDate: isoDate,
-                tanggal: dateStr,
-                jam: timeStr,
-                nik: appState.profile.nik,
-                nama: appState.profile.name,
-                divisi: appState.profile.dept,
-                tipeAbsen: appState.pendingAction,
+                // 10 Kolom Utama Sesuai Export Mekari Talenta
+                date: isoDate,                                 // 1. Date (YYYY-MM-DD)
+                checkTime: timeStr,                            // 2. Check Time (HH:mm:ss)
+                type: appState.pendingAction,                  // 3. Type (Clock In / Clock Out)
+                employeeId: String(appState.profile.employeeId), // 4. Employee ID (preserves leading zeros)
+                fullName: appState.profile.fullName,           // 5. Full Name
+                organization: appState.profile.organization,   // 6. Organization
+                jobPosition: appState.profile.jobPosition,     // 7. Job Position
+                locationAddress: editedAddress,                // 8. Location Address
+                locationCoordinate: coordString,               // 9. Location Coordinate
+                description: fullDescription,                  // 10. Description
+                // Metadata tambahan untuk UI lokal & Drive
                 statusKetepatan: punctuality,
                 modeKerja: appState.workMode,
-                koordinat: `${appState.gps.lat.toFixed(6)}, ${appState.gps.lng.toFixed(6)}`,
                 jarakMeter: appState.gps.distance ?? 0,
                 statusRadius: appState.gps.inRadius ? 'Dalam Radius Kantor' : 'Luar Radius',
-                alamat: appState.gps.address,
-                catatan: note || '-',
                 foto: appState.capturedDataUrl,
                 synced: false
             };
@@ -1104,12 +1176,23 @@
             // Kirim ke Google Sheets jika URL sudah dikonfigurasi
             if (appState.config.gsheetUrl) {
                 try {
-                    const payload = { ...record };
-                    delete payload.foto; // Hindari batas ukuran sel 50.000 karakter di Google Sheets
+                    const payload = {
+                        date: record.date,
+                        checkTime: record.checkTime,
+                        type: record.type,
+                        employeeId: record.employeeId,
+                        fullName: record.fullName,
+                        organization: record.organization,
+                        jobPosition: record.jobPosition,
+                        locationAddress: record.locationAddress,
+                        locationCoordinate: record.locationCoordinate,
+                        description: record.description,
+                        photo: record.foto
+                    };
 
                     await fetch(appState.config.gsheetUrl, {
                         method: 'POST',
-                        mode: 'no-cors', // Diperlukan untuk Google Apps Script Web App
+                        mode: 'no-cors',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload)
                     });
@@ -1136,11 +1219,11 @@
             renderHistoryList();
 
             if (record.synced) {
-                showToast(`${record.tipeAbsen} berhasil & tersinkron ke Google Sheets!`, 'success');
+                showToast(`${record.type} berhasil & tersinkron ke Google Sheets!`, 'success');
             } else if (appState.config.gsheetUrl) {
-                showToast(`${record.tipeAbsen} tersimpan lokal (Cek koneksi Google Sheets).`, 'info');
+                showToast(`${record.type} tersimpan lokal (Cek koneksi Google Sheets).`, 'info');
             } else {
-                showToast(`${record.tipeAbsen} berhasil dicatat secara lokal!`, 'success');
+                showToast(`${record.type} berhasil dicatat secara lokal!`, 'success');
             }
         }
 
@@ -1149,10 +1232,10 @@
         // ==========================================
         function renderTodaySummary() {
             const { isoDate } = getJakartaDateTimeParts();
-            const todayLogs = appState.logs.filter(l => l.isoDate === isoDate && l.nik === appState.profile.nik);
+            const todayLogs = appState.logs.filter(l => (l.date || l.isoDate) === isoDate && (l.employeeId || l.nik) === appState.profile.employeeId);
 
-            const firstClockIn = [...todayLogs].reverse().find(l => l.tipeAbsen === 'Clock In');
-            const lastClockOut = todayLogs.find(l => l.tipeAbsen === 'Clock Out');
+            const firstClockIn = [...todayLogs].reverse().find(l => (l.type || l.tipeAbsen) === 'Clock In');
+            const lastClockOut = todayLogs.find(l => (l.type || l.tipeAbsen) === 'Clock Out');
 
             const badge = document.getElementById('today-attendance-badge');
             if (firstClockIn && lastClockOut) {
@@ -1167,7 +1250,8 @@
             }
 
             if (firstClockIn) {
-                document.getElementById('today-clock-in').textContent = firstClockIn.jam.slice(0, 5);
+                const tIn = firstClockIn.checkTime || firstClockIn.jam;
+                document.getElementById('today-clock-in').textContent = tIn.slice(0, 5);
                 document.getElementById('today-clock-in-status').textContent = `${firstClockIn.statusKetepatan} (${firstClockIn.modeKerja})`;
             } else {
                 document.getElementById('today-clock-in').textContent = '--:--';
@@ -1175,7 +1259,8 @@
             }
 
             if (lastClockOut) {
-                document.getElementById('today-clock-out').textContent = lastClockOut.jam.slice(0, 5);
+                const tOut = lastClockOut.checkTime || lastClockOut.jam;
+                document.getElementById('today-clock-out').textContent = tOut.slice(0, 5);
                 document.getElementById('today-clock-out-status').textContent = `${lastClockOut.modeKerja} • ${lastClockOut.statusRadius}`;
             } else {
                 document.getElementById('today-clock-out').textContent = '--:--';
@@ -1208,7 +1293,15 @@
             }
 
             listEl.innerHTML = appState.logs.map((item, idx) => {
-                const isClockIn = item.tipeAbsen === 'Clock In';
+                const typeLabel = item.type || item.tipeAbsen;
+                const timeLabel = item.checkTime || item.jam;
+                const dateLabel = item.date || item.tanggal;
+                const nameLabel = item.fullName || item.nama;
+                const idLabel = item.employeeId || item.nik;
+                const orgLabel = item.organization || item.divisi;
+                const posLabel = item.jobPosition || '-';
+
+                const isClockIn = typeLabel === 'Clock In';
                 const statusBadge = item.statusKetepatan === 'Terlambat'
                     ? `<span class="px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-50 text-rose-600">Terlambat</span>`
                     : item.statusKetepatan === 'Tepat Waktu'
@@ -1224,12 +1317,13 @@
                         <img src="${item.foto}" alt="Selfie" class="w-14 h-14 rounded-xl object-cover bg-slate-200 shrink-0 border border-slate-200">
                         <div class="min-w-0 flex-1">
                             <div class="flex items-center justify-between gap-1">
-                                <span class="text-xs font-bold ${isClockIn ? 'text-talenta-700' : 'text-rose-600'}">${item.tipeAbsen} • ${item.jam.slice(0, 5)} WIB</span>
+                                <span class="text-xs font-bold ${isClockIn ? 'text-talenta-700' : 'text-rose-600'}">${typeLabel} • ${timeLabel}</span>
                                 ${statusBadge}
                             </div>
-                            <p class="text-[11px] font-semibold text-slate-700 truncate mt-0.5">${item.nama} (${item.nik})</p>
+                            <p class="text-[11px] font-semibold text-slate-700 truncate mt-0.5">${nameLabel} (${idLabel})</p>
+                            <p class="text-[10px] text-slate-500 truncate">${orgLabel} • ${posLabel}</p>
                             <div class="flex items-center justify-between text-[10px] text-slate-500 mt-1">
-                                <span>${item.tanggal} • ${item.modeKerja}</span>
+                                <span>${dateLabel}</span>
                                 ${syncIcon}
                             </div>
                         </div>
@@ -1243,12 +1337,13 @@
             const item = appState.logs[index];
             if (!item) return;
             document.getElementById('detail-img').src = item.foto;
-            document.getElementById('detail-type').textContent = `${item.tipeAbsen} (${item.modeKerja})`;
+            document.getElementById('detail-type').textContent = `${item.type || item.tipeAbsen} (${item.modeKerja})`;
             document.getElementById('detail-status').textContent = item.statusKetepatan;
-            document.getElementById('detail-emp').textContent = `${item.nama} — NIK: ${item.nik} (${item.divisi})`;
-            document.getElementById('detail-time').textContent = `Waktu: ${item.tanggal}, Pukul ${item.jam} WIB`;
-            document.getElementById('detail-loc').textContent = `Lokasi: ${item.statusRadius} (${item.jarakMeter}m) • ${item.alamat}`;
-            document.getElementById('detail-note').textContent = `Catatan: ${item.catatan}`;
+            document.getElementById('detail-emp').textContent = `${item.fullName || item.nama} — ID: ${item.employeeId || item.nik}`;
+            document.getElementById('detail-pos').textContent = `${item.organization || item.divisi} • ${item.jobPosition || '-'}`;
+            document.getElementById('detail-time').textContent = `Date: ${item.date || item.tanggal} | Check Time: ${item.checkTime || item.jam}`;
+            document.getElementById('detail-loc').textContent = `Address: ${item.locationAddress || item.alamat} (${item.locationCoordinate || item.koordinat})`;
+            document.getElementById('detail-note').textContent = `Description: ${item.description || item.catatan}`;
             document.getElementById('detail-modal').classList.remove('hidden');
         }
 
@@ -1304,32 +1399,83 @@
                 return;
             }
             saveSettings();
-            const { dateStr, timeStr } = getJakartaDateTimeParts();
+            const { isoDate, timeStr } = getJakartaDateTimeParts();
             try {
                 await fetch(url, {
                     method: 'POST',
                     mode: 'no-cors',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        tanggal: dateStr,
-                        jam: timeStr,
-                        nik: appState.profile.nik || 'TEST-001',
-                        nama: appState.profile.name || 'Tes Koneksi ITDS',
-                        divisi: appState.profile.dept || 'IT Department',
-                        tipeAbsen: 'TES KONEKSI',
-                        statusKetepatan: 'OK',
-                        modeKerja: 'System Check',
-                        koordinat: `${appState.gps.lat || 0}, ${appState.gps.lng || 0}`,
-                        jarakMeter: 0,
-                        statusRadius: 'Test',
-                        alamat: 'Ping dari Web Live Attendance',
-                        catatan: 'Verifikasi integrasi Google Sheets berhasil'
+                        date: isoDate,
+                        checkTime: timeStr,
+                        type: 'Clock In',
+                        employeeId: appState.profile.employeeId || '010120301',
+                        fullName: appState.profile.fullName || 'Agung Surya Pratama',
+                        organization: appState.profile.organization || 'Sales',
+                        jobPosition: appState.profile.jobPosition || 'Sales Executive',
+                        locationAddress: appState.gps.address || 'Jakarta, Indonesia',
+                        locationCoordinate: `${appState.gps.lat || -6.208800}, ${appState.gps.lng || 106.845600}`,
+                        description: '[TES KONEKSI] Verifikasi 10 kolom Talenta berhasil'
                     })
                 });
                 showToast('Data tes terkirim! Periksa baris baru di Google Sheets Anda.', 'success');
             } catch (e) {
                 showToast('Gagal mengirim tes ke URL tersebut.', 'error');
             }
+        }
+
+        function copyAppsScript() {
+            const textarea = document.getElementById('apps-script-code');
+            textarea.select();
+            textarea.setSelectionRange(0, 99999);
+            document.execCommand('copy');
+            showToast('Kode Google Apps Script berhasil disalin!', 'success');
+        }
+
+        function exportToCSV() {
+            if (appState.logs.length === 0) {
+                showToast('Belum ada data absensi untuk diekspor.', 'error');
+                return;
+            }
+
+            // 10 Kolom Persis Seperti Format Mekari Talenta
+            const headers = [
+                'Date',
+                'Check Time',
+                'Type',
+                'Employee ID',
+                'Full Name',
+                'Organization',
+                'Job Position',
+                'Location Address',
+                'Location Coordinate',
+                'Description'
+            ];
+
+            const rows = appState.logs.map(l => [
+                l.date || l.isoDate || l.tanggal,
+                l.checkTime || l.jam,
+                l.type || l.tipeAbsen,
+                String(l.employeeId || l.nik),
+                l.fullName || l.nama,
+                l.organization || l.divisi,
+                l.jobPosition || '-',
+                l.locationAddress || l.alamat,
+                l.locationCoordinate || l.koordinat,
+                l.description || l.catatan
+            ].map(val => `"${String(val).replace(/"/g, '""')}"`).join(','));
+
+            const csvContent = '\uFEFF' + [headers.join(','), ...rows].join('\n');
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.setAttribute('download', `Attendance_Export_${new Date().toISOString().slice(0, 10)}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            showToast('File CSV (Format 10 Kolom Talenta) berhasil diunduh!', 'success');
+        }
         }
 
         function copyAppsScript() {
