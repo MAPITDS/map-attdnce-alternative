@@ -1,0 +1,1440 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Live Attendance - Sistem Absensi Karyawan</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts: Plus Jakarta Sans & Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Leaflet CSS & JS for Mini Map -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        display: ['Plus Jakarta Sans', 'sans-serif'],
+                    },
+                    colors: {
+                        talenta: {
+                            50: '#eef2ff',
+                            100: '#e0e7ff',
+                            500: '#3b49df',
+                            600: '#2b36b8',
+                            700: '#1e268a',
+                            800: '#161c66',
+                            900: '#0f1347',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #f3f4f8;
+            -webkit-tap-highlight-color: transparent;
+        }
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 5px;
+            height: 5px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 10px;
+        }
+        .mirror-video {
+            transform: scaleX(-1);
+        }
+        /* Leaflet Z-index fix */
+        .leaflet-pane { z-index: 10 !important; }
+        .leaflet-top, .leaflet-bottom { z-index: 20 !important; }
+    </style>
+</head>
+<body class="text-slate-800 antialiased min-h-screen flex justify-center">
+
+    <!-- Mobile-First App Container -->
+    <div class="w-full max-w-md bg-[#f8f9fc] min-h-screen shadow-2xl relative flex flex-col overflow-x-hidden pb-24">
+
+        <!-- Toast / Notification Banner -->
+        <div id="toast" class="fixed top-4 left-1/2 -translate-x-1/2 z-50 w-[90%] max-w-sm pointer-events-none transition-all duration-300 opacity-0 -translate-y-4">
+            <div id="toast-content" class="bg-slate-900 text-white px-4 py-3 rounded-xl shadow-xl flex items-center gap-3 text-sm font-medium border border-slate-700">
+                <i id="toast-icon" data-lucide="info" class="w-5 h-5 text-indigo-400 shrink-0"></i>
+                <span id="toast-msg">Notifikasi sistem</span>
+            </div>
+        </div>
+
+        <!-- Top Header (Mekari Talenta Signature Blue/Indigo Gradient) -->
+        <header class="bg-gradient-to-br from-[#1b2482] via-[#2734b5] to-[#3949e6] text-white pt-5 pb-16 px-5 rounded-b-[28px] shadow-md relative overflow-hidden">
+            <!-- Decorative Background Circles -->
+            <div class="absolute -right-10 -top-10 w-40 h-40 rounded-full bg-white/5 pointer-events-none"></div>
+            <div class="absolute right-12 top-20 w-24 h-24 rounded-full bg-indigo-400/10 pointer-events-none"></div>
+
+            <!-- Top Bar: Brand & Sync Status -->
+            <div class="flex items-center justify-between mb-5 relative z-10">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 rounded-lg bg-white/15 backdrop-blur-sm flex items-center justify-center border border-white/20">
+                        <i data-lucide="clock-check" class="w-5 h-5 text-white"></i>
+                    </div>
+                    <div>
+                        <h1 class="font-display font-bold text-base tracking-tight leading-none">Live Attendance</h1>
+                        <span class="text-[11px] text-indigo-200 font-medium">Sistem Absensi Darurat</span>
+                    </div>
+                </div>
+                <div id="gsheet-status-badge" onclick="switchTab('settings')" class="cursor-pointer flex items-center gap-1.5 bg-white/10 hover:bg-white/20 transition px-2.5 py-1 rounded-full text-[11px] font-medium border border-white/15">
+                    <span id="gsheet-dot" class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+                    <span id="gsheet-status-text">Lokal / Belum Sync</span>
+                </div>
+            </div>
+
+            <!-- Employee Profile Selector Card -->
+            <div class="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-3.5 relative z-10">
+                <div class="flex items-center justify-between gap-3">
+                    <div class="flex items-center gap-3 flex-1 min-w-0">
+                        <div id="emp-avatar" class="w-11 h-11 rounded-full bg-white text-talenta-700 font-display font-bold text-base flex items-center justify-center shrink-0 shadow-sm">
+                            KR
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <div class="flex items-center gap-1.5">
+                                <p id="display-emp-name" class="font-semibold text-sm text-white truncate">Pilih / Isi Data Karyawan</p>
+                            </div>
+                            <p id="display-emp-meta" class="text-xs text-indigo-200 truncate mt-0.5">NIK: - • Divisi: -</p>
+                        </div>
+                    </div>
+                    <button onclick="openProfileModal()" class="p-2 bg-white/15 hover:bg-white/25 rounded-xl text-white transition shrink-0" title="Ganti / Isi Profil Karyawan">
+                        <i data-lucide="user-pen" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- MAIN TAB CONTENT AREA -->
+        <main class="px-4 -mt-10 relative z-20 flex-1 space-y-4">
+
+            <!-- ================= TAB 1: ABSENSI (HOME) ================= -->
+            <section id="tab-home" class="space-y-4">
+                
+                <!-- Live Clock & Shift Card (Talenta Style) -->
+                <div class="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-5 text-center">
+                    <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-50 text-talenta-600 text-xs font-semibold mb-2">
+                        <i data-lucide="calendar" class="w-3.5 h-3.5"></i>
+                        <span id="live-date">Memuat tanggal...</span>
+                    </div>
+                    
+                    <div class="font-display font-extrabold text-3xl sm:text-4xl text-slate-900 tracking-tight my-1" id="live-clock">
+                        00:00:00 <span class="text-sm font-semibold text-slate-400">WIB</span>
+                    </div>
+
+                    <div class="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
+                        <div class="text-left">
+                            <span class="text-slate-400 block">Jadwal Shift</span>
+                            <span id="display-shift" class="font-semibold text-slate-700">Office Hour (08:00 - 17:00)</span>
+                        </div>
+                        <div class="text-right">
+                            <span class="text-slate-400 block">Status Hari Ini</span>
+                            <span id="today-attendance-badge" class="inline-flex items-center gap-1 font-semibold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md mt-0.5">
+                                Belum Clock In
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- Today's Check-in / Check-out Summary Pills -->
+                    <div class="grid grid-cols-2 gap-2.5 mt-4">
+                        <div class="bg-slate-50 rounded-xl p-2.5 border border-slate-100 text-left">
+                            <div class="flex items-center gap-1.5 text-[11px] text-slate-500 font-medium">
+                                <i data-lucide="log-in" class="w-3.5 h-3.5 text-emerald-600"></i>
+                                <span>Clock In</span>
+                            </div>
+                            <p id="today-clock-in" class="font-display font-bold text-base text-slate-800 mt-0.5">--:--</p>
+                            <p id="today-clock-in-status" class="text-[10px] text-slate-400 truncate">Menunggu absen masuk</p>
+                        </div>
+                        <div class="bg-slate-50 rounded-xl p-2.5 border border-slate-100 text-left">
+                            <div class="flex items-center gap-1.5 text-[11px] text-slate-500 font-medium">
+                                <i data-lucide="log-out" class="w-3.5 h-3.5 text-rose-600"></i>
+                                <span>Clock Out</span>
+                            </div>
+                            <p id="today-clock-out" class="font-display font-bold text-base text-slate-800 mt-0.5">--:--</p>
+                            <p id="today-clock-out-status" class="text-[10px] text-slate-400 truncate">Menunggu absen pulang</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Geolocation & Radius Card -->
+                <div class="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-4">
+                    <div class="flex items-center justify-between mb-2.5">
+                        <div class="flex items-center gap-2">
+                            <div class="w-7 h-7 rounded-lg bg-indigo-50 text-talenta-600 flex items-center justify-center">
+                                <i data-lucide="map-pin" class="w-4 h-4"></i>
+                            </div>
+                            <div>
+                                <h2 class="text-xs font-bold text-slate-800">Lokasi GPS Anda</h2>
+                                <p id="gps-accuracy" class="text-[10px] text-slate-400">Mendeteksi titik koordinat...</p>
+                            </div>
+                        </div>
+                        <button onclick="refreshLocation()" class="text-xs font-semibold text-talenta-600 hover:text-talenta-700 flex items-center gap-1 bg-indigo-50 px-2.5 py-1.5 rounded-lg transition">
+                            <i data-lucide="refresh-cw" class="w-3 h-3"></i>
+                            <span>Refresh</span>
+                        </button>
+                    </div>
+
+                    <!-- Mini Map -->
+                    <div id="mini-map" class="w-full h-32 rounded-xl bg-slate-100 border border-slate-200 overflow-hidden mb-2.5"></div>
+
+                    <div class="flex items-start justify-between gap-2 text-xs">
+                        <div class="min-w-0 flex-1">
+                            <p id="gps-coords" class="font-mono text-[11px] text-slate-600 font-medium">Lat: -, Lng: -</p>
+                            <p id="gps-address" class="text-[11px] text-slate-500 line-clamp-2 mt-0.5">Mengambil informasi lokasi...</p>
+                        </div>
+                        <span id="radius-badge" class="shrink-0 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600">
+                            Cek Radius...
+                        </span>
+                    </div>
+                </div>
+
+                <!-- Work Mode & Notes Card -->
+                <div class="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-4 space-y-3">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-2">Tipe Kehadiran</label>
+                        <div class="grid grid-cols-3 gap-2" id="work-mode-group">
+                            <button type="button" onclick="selectWorkMode('WFO')" data-mode="WFO" class="mode-btn py-2 px-2 rounded-xl border-2 border-talenta-500 bg-indigo-50/70 text-talenta-700 font-semibold text-xs flex flex-col items-center gap-1 transition">
+                                <i data-lucide="building-2" class="w-4 h-4"></i>
+                                <span>WFO</span>
+                            </button>
+                            <button type="button" onclick="selectWorkMode('WFH')" data-mode="WFH" class="mode-btn py-2 px-2 rounded-xl border border-slate-200 bg-white text-slate-600 font-medium text-xs flex flex-col items-center gap-1 transition hover:bg-slate-50">
+                                <i data-lucide="home" class="w-4 h-4"></i>
+                                <span>WFH</span>
+                            </button>
+                            <button type="button" onclick="selectWorkMode('Dinas Luar')" data-mode="Dinas Luar" class="mode-btn py-2 px-2 rounded-xl border border-slate-200 bg-white text-slate-600 font-medium text-xs flex flex-col items-center gap-1 transition hover:bg-slate-50">
+                                <i data-lucide="briefcase" class="w-4 h-4"></i>
+                                <span>Dinas Luar</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label for="attendance-note" class="block text-xs font-bold text-slate-700 mb-1.5">Catatan Kehadiran <span class="font-normal text-slate-400">(Opsional)</span></label>
+                        <input type="text" id="attendance-note" placeholder="Contoh: Kunjungan klien, WFH sesuai jadwal, dll." class="w-full text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-talenta-500 focus:ring-2 focus:ring-indigo-100 bg-slate-50/50">
+                    </div>
+
+                    <!-- Primary Clock In & Clock Out Buttons -->
+                    <div class="grid grid-cols-2 gap-3 pt-1">
+                        <button id="btn-clock-in" onclick="initiateAttendance('Clock In')" class="py-3.5 px-4 rounded-xl bg-gradient-to-r from-[#2734b5] to-[#3b49df] hover:from-[#1e268a] hover:to-[#2b36b8] text-white font-display font-bold text-sm shadow-md shadow-indigo-500/25 flex items-center justify-center gap-2 active:scale-[0.98] transition">
+                            <i data-lucide="camera" class="w-4 h-4"></i>
+                            <span>Clock In</span>
+                        </button>
+                        <button id="btn-clock-out" onclick="initiateAttendance('Clock Out')" class="py-3.5 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-display font-bold text-sm shadow-md shadow-rose-500/25 flex items-center justify-center gap-2 active:scale-[0.98] transition">
+                            <i data-lucide="log-out" class="w-4 h-4"></i>
+                            <span>Clock Out</span>
+                        </button>
+                    </div>
+                </div>
+
+            </section>
+
+            <!-- ================= TAB 2: RIWAYAT (ATTENDANCE LOG) ================= -->
+            <section id="tab-history" class="hidden space-y-4">
+                <div class="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-4">
+                    <div class="flex items-center justify-between mb-3">
+                        <div>
+                            <h2 class="font-display font-bold text-base text-slate-800">Riwayat Absensi</h2>
+                            <p class="text-xs text-slate-500">Log kehadiran tersimpan & status sinkronisasi</p>
+                        </div>
+                        <button onclick="exportToCSV()" class="px-3 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-semibold text-xs flex items-center gap-1.5 border border-emerald-200 transition">
+                            <i data-lucide="file-spreadsheet" class="w-4 h-4"></i>
+                            <span>Ekspor CSV</span>
+                        </button>
+                    </div>
+
+                    <!-- Filter / Quick Stats -->
+                    <div class="grid grid-cols-3 gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-100 mb-4 text-center">
+                        <div>
+                            <span class="text-[10px] text-slate-400 block">Total Log</span>
+                            <span id="stat-total" class="font-display font-bold text-sm text-slate-800">0</span>
+                        </div>
+                        <div class="border-x border-slate-200">
+                            <span class="text-[10px] text-slate-400 block">Tepat Waktu</span>
+                            <span id="stat-ontime" class="font-display font-bold text-sm text-emerald-600">0</span>
+                        </div>
+                        <div>
+                            <span class="text-[10px] text-slate-400 block">Terlambat</span>
+                            <span id="stat-late" class="font-display font-bold text-sm text-rose-600">0</span>
+                        </div>
+                    </div>
+
+                    <!-- Attendance List Container -->
+                    <div id="attendance-list" class="space-y-3">
+                        <!-- Rendered via JS -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- ================= TAB 3: PENGATURAN & GOOGLE SHEETS ================= -->
+            <section id="tab-settings" class="hidden space-y-4">
+                
+                <!-- Google Sheets Webhook Integration Card -->
+                <div class="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-4 space-y-3.5">
+                    <div class="flex items-start gap-3">
+                        <div class="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+                            <i data-lucide="sheet" class="w-5 h-5"></i>
+                        </div>
+                        <div>
+                            <h2 class="font-display font-bold text-sm text-slate-800">Integrasi Real-Time Google Sheets</h2>
+                            <p class="text-xs text-slate-500 mt-0.5">Setiap absensi masuk/pulang otomatis terkirim ke spreadsheet perusahaan.</p>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label for="gsheet-url" class="block text-xs font-bold text-slate-700 mb-1">URL Web App Google Apps Script</label>
+                        <input type="url" id="gsheet-url" placeholder="https://script.google.com/macros/s/AKfycb.../exec" class="w-full text-xs px-3 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-talenta-500 bg-slate-50 font-mono">
+                    </div>
+
+                    <div class="flex gap-2">
+                        <button onclick="saveSettings()" class="flex-1 py-2.5 px-3 rounded-xl bg-talenta-600 hover:bg-talenta-700 text-white font-semibold text-xs transition flex items-center justify-center gap-1.5">
+                            <i data-lucide="save" class="w-3.5 h-3.5"></i>
+                            <span>Simpan Konfigurasi</span>
+                        </button>
+                        <button onclick="testGoogleSheetConnection()" class="py-2.5 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs transition flex items-center justify-center gap-1.5">
+                            <i data-lucide="send" class="w-3.5 h-3.5"></i>
+                            <span>Tes Kirim</span>
+                        </button>
+                    </div>
+
+                    <!-- Accordion / Box for Apps Script Code -->
+                    <div class="pt-2 border-t border-slate-100">
+                        <div class="flex items-center justify-between mb-1.5">
+                            <span class="text-xs font-bold text-slate-700">Kode Google Apps Script (Backend)</span>
+                            <button onclick="copyAppsScript()" class="text-xs font-semibold text-talenta-600 hover:text-talenta-700 flex items-center gap-1 bg-indigo-50 px-2.5 py-1 rounded-lg">
+                                <i data-lucide="copy" class="w-3 h-3"></i>
+                                <span>Salin Kode</span>
+                            </button>
+                        </div>
+                        <p class="text-[11px] text-slate-500 mb-2">
+                            1. Buka Google Sheets baru &rarr; Klik menu <b>Ekstensi (Extensions) &gt; Apps Script</b>.<br>
+                            2. Hapus kode lama, tempel kode di bawah, lalu klik <b>Deploy &gt; New deployment &gt; Web app</b> (Akses: <i>Anyone</i>).<br>
+                            3. Salin URL Web App yang muncul ke kolom di atas.
+                        </p>
+                        <textarea id="apps-script-code" readonly rows="6" class="w-full text-[11px] font-mono bg-slate-900 text-emerald-300 p-3 rounded-xl border border-slate-700 focus:outline-none">function doPost(e) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow([
+      "Timestamp Server", "Tanggal", "Jam (WIB)", "NIK", "Nama Karyawan", 
+      "Divisi", "Tipe Absen", "Status Ketepatan", "Mode Kerja", 
+      "Koordinat GPS", "Jarak Kantor (m)", "Status Radius", "Alamat Lokasi", "Catatan"
+    ]);
+  }
+  
+  var data = JSON.parse(e.postData.contents);
+  sheet.appendRow([
+    new Date(),
+    data.tanggal,
+    data.jam,
+    data.nik,
+    data.nama,
+    data.divisi,
+    data.tipeAbsen,
+    data.statusKetepatan,
+    data.modeKerja,
+    data.koordinat,
+    data.jarakMeter,
+    data.statusRadius,
+    data.alamat,
+    data.catatan
+  ]);
+  
+  return ContentService.createTextOutput(JSON.stringify({ "status": "success" }))
+    .setMimeType(ContentService.MimeType.JSON);
+}</textarea>
+                    </div>
+                </div>
+
+                <!-- Office Geofencing & Shift Configuration Card -->
+                <div class="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-4 space-y-3.5">
+                    <div class="flex items-start gap-3">
+                        <div class="w-9 h-9 rounded-xl bg-indigo-50 text-talenta-600 flex items-center justify-center shrink-0">
+                            <i data-lucide="map-pinned" class="w-5 h-5"></i>
+                        </div>
+                        <div>
+                            <h2 class="font-display font-bold text-sm text-slate-800">Titik Koordinat Kantor & Jam Shift</h2>
+                            <p class="text-xs text-slate-500 mt-0.5">Atur pusat lokasi kantor untuk deteksi radius WFO dan jam masuk.</p>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-2.5">
+                        <div>
+                            <label class="block text-[11px] font-bold text-slate-700 mb-1">Latitude Kantor</label>
+                            <input type="text" id="cfg-lat" value="-6.2088" class="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 font-mono">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-bold text-slate-700 mb-1">Longitude Kantor</label>
+                            <input type="text" id="cfg-lng" value="106.8456" class="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 font-mono">
+                        </div>
+                    </div>
+
+                    <button type="button" onclick="useCurrentLocationAsOffice()" class="w-full py-2 px-3 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-talenta-700 font-semibold text-xs flex items-center justify-center gap-1.5 transition">
+                        <i data-lucide="crosshair" class="w-3.5 h-3.5"></i>
+                        <span>Gunakan Lokasi GPS Saya Saat Ini Sebagai Kantor</span>
+                    </button>
+
+                    <div class="grid grid-cols-3 gap-2">
+                        <div>
+                            <label class="block text-[11px] font-bold text-slate-700 mb-1">Radius (Meter)</label>
+                            <input type="number" id="cfg-radius" value="150" class="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 bg-slate-50">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-bold text-slate-700 mb-1">Jam Masuk</label>
+                            <input type="time" id="cfg-start" value="08:00" class="w-full text-xs px-2.5 py-2 rounded-xl border border-slate-200 bg-slate-50">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-bold text-slate-700 mb-1">Jam Pulang</label>
+                            <input type="time" id="cfg-end" value="17:00" class="w-full text-xs px-2.5 py-2 rounded-xl border border-slate-200 bg-slate-50">
+                        </div>
+                    </div>
+
+                    <button onclick="saveSettings()" class="w-full py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-semibold text-xs transition">
+                        Simpan Pengaturan Lokasi & Shift
+                    </button>
+                </div>
+
+                <!-- Danger Zone: Reset Local Data -->
+                <div class="bg-white rounded-2xl shadow-sm border border-rose-100 p-4 flex items-center justify-between">
+                    <div>
+                        <h3 class="text-xs font-bold text-rose-700">Hapus Riwayat Lokal</h3>
+                        <p class="text-[11px] text-slate-500">Bersihkan cache log absensi di browser ini</p>
+                    </div>
+                    <button onclick="confirmClearLogs()" class="px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 font-semibold text-xs transition">
+                        Reset Log
+                    </button>
+                </div>
+
+            </section>
+        </main>
+
+        <!-- Bottom Navigation Bar (Talenta Mobile App Style) -->
+        <nav class="fixed bottom-0 w-full max-w-md bg-white border-t border-slate-200 px-6 py-2 flex items-center justify-around z-30 shadow-[0_-4px_15px_rgba(0,0,0,0.04)]">
+            <button onclick="switchTab('home')" id="nav-home" class="nav-btn flex flex-col items-center gap-1 py-1 px-3 text-talenta-600 font-semibold">
+                <i data-lucide="fingerprint" class="w-5 h-5"></i>
+                <span class="text-[11px]">Absensi</span>
+            </button>
+            <button onclick="switchTab('history')" id="nav-history" class="nav-btn flex flex-col items-center gap-1 py-1 px-3 text-slate-400 hover:text-slate-600 font-medium">
+                <i data-lucide="history" class="w-5 h-5"></i>
+                <span class="text-[11px]">Riwayat</span>
+            </button>
+            <button onclick="switchTab('settings')" id="nav-settings" class="nav-btn flex flex-col items-center gap-1 py-1 px-3 text-slate-400 hover:text-slate-600 font-medium">
+                <i data-lucide="settings" class="w-5 h-5"></i>
+                <span class="text-[11px]">Pengaturan</span>
+            </button>
+        </nav>
+
+        <!-- ================= MODAL 1: PROFIL KARYAWAN ================= -->
+        <div id="profile-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 hidden flex items-end sm:items-center justify-center p-0 sm:p-4">
+            <div class="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl space-y-4 animate-slide-up">
+                <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+                    <div>
+                        <h3 class="font-display font-bold text-base text-slate-800">Identitas Karyawan</h3>
+                        <p class="text-xs text-slate-500">Pilih dari daftar cepat atau ketik manual</p>
+                    </div>
+                    <button onclick="closeProfileModal()" class="p-1.5 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200">
+                        <i data-lucide="x" class="w-4 h-4"></i>
+                    </button>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">Pilih Cepat Karyawan (Preset)</label>
+                    <select id="preset-employee" onchange="applyPresetEmployee()" class="w-full text-xs px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:outline-none focus:border-talenta-500">
+                        <option value="">-- Ketik Manual di Bawah / Pilih Preset --</option>
+                        <option value="EMP-001|Budi Santoso|Finance & Accounting">EMP-001 - Budi Santoso (Finance & Accounting)</option>
+                        <option value="EMP-002|Siti Aminah|Admin Sales">EMP-002 - Siti Aminah (Admin Sales)</option>
+                        <option value="EMP-003|Rizky Pratama|ITDS Department">EMP-003 - Rizky Pratama (ITDS Department)</option>
+                        <option value="EMP-004|Dewi Lestari|Human Resources">EMP-004 - Dewi Lestari (Human Resources)</option>
+                    </select>
+                </div>
+
+                <div class="space-y-2.5">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">NIK / ID Karyawan *</label>
+                        <input type="text" id="input-nik" placeholder="Contoh: 20260105" class="w-full text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-talenta-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">Nama Lengkap *</label>
+                        <input type="text" id="input-name" placeholder="Masukkan nama lengkap Anda" class="w-full text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-talenta-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">Divisi / Departemen *</label>
+                        <input type="text" id="input-dept" placeholder="Contoh: Finance, Sales, Operasional" class="w-full text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-talenta-500">
+                    </div>
+                </div>
+
+                <button onclick="saveEmployeeProfile()" class="w-full py-3 rounded-xl bg-talenta-600 hover:bg-talenta-700 text-white font-display font-bold text-sm shadow-md transition">
+                    Simpan Identitas Karyawan
+                </button>
+            </div>
+        </div>
+
+        <!-- ================= MODAL 2: LIVE SELFIE CAMERA ================= -->
+        <div id="camera-modal" class="fixed inset-0 bg-slate-950 z-50 hidden flex flex-col justify-between">
+            <!-- Camera Top Bar -->
+            <div class="p-4 flex items-center justify-between text-white bg-gradient-to-b from-black/80 to-transparent z-10">
+                <div>
+                    <span id="cam-action-badge" class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-talenta-500 text-white">CLOCK IN</span>
+                    <h3 class="font-display font-bold text-sm mt-1">Verifikasi Foto Selfie</h3>
+                </div>
+                <button onclick="closeCameraModal()" class="p-2 rounded-full bg-white/15 hover:bg-white/25 text-white">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+
+            <!-- Live Video / Captured Preview Container -->
+            <div class="relative flex-1 flex items-center justify-center overflow-hidden bg-black">
+                <video id="camera-video" autoplay playsinline class="w-full h-full object-cover mirror-video"></video>
+                <canvas id="camera-canvas" class="hidden w-full h-full object-contain"></canvas>
+                
+                <!-- Face Guide Oval Overlay -->
+                <div id="face-guide" class="absolute inset-0 pointer-events-none flex flex-col items-center justify-center">
+                    <div class="w-56 h-72 rounded-[50%] border-2 border-dashed border-white/60 shadow-[0_0_0_9999px_rgba(0,0,0,0.45)]"></div>
+                    <p class="text-white/90 text-xs font-medium mt-4 bg-black/50 px-3 py-1 rounded-full">Posisikan wajah Anda di dalam bingkai</p>
+                </div>
+
+                <!-- Fallback Upload Input if Camera Denied -->
+                <div id="camera-fallback" class="hidden text-center p-6 max-w-xs">
+                    <div class="w-14 h-14 rounded-full bg-rose-500/20 text-rose-400 flex items-center justify-center mx-auto mb-3">
+                        <i data-lucide="camera-off" class="w-7 h-7"></i>
+                    </div>
+                    <h4 class="text-white font-bold text-sm mb-1">Kamera Tidak Dapat Diakses</h4>
+                    <p class="text-slate-400 text-xs mb-4">Pastikan izin kamera di browser aktif, atau ambil foto menggunakan kamera bawaan HP Anda.</p>
+                    <label class="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-talenta-600 text-white text-xs font-bold cursor-pointer">
+                        <i data-lucide="upload" class="w-4 h-4"></i>
+                        <span>Ambil / Pilih Foto</span>
+                        <input type="file" accept="image/*" capture="user" onchange="handleFallbackPhoto(event)" class="hidden">
+                    </label>
+                </div>
+            </div>
+
+            <!-- Camera Bottom Controls -->
+            <div class="p-5 bg-slate-900 border-t border-slate-800 z-10">
+                <!-- State 1: Capture Button -->
+                <div id="cam-controls-capture" class="flex items-center justify-center">
+                    <button onclick="capturePhoto()" class="w-16 h-16 rounded-full bg-white p-1 shadow-lg active:scale-95 transition flex items-center justify-center">
+                        <div class="w-full h-full rounded-full border-2 border-slate-900 bg-white flex items-center justify-center">
+                            <i data-lucide="camera" class="w-6 h-6 text-slate-900"></i>
+                        </div>
+                    </button>
+                </div>
+
+                <!-- State 2: Retake or Submit Attendance -->
+                <div id="cam-controls-confirm" class="hidden grid grid-cols-2 gap-3">
+                    <button onclick="retakePhoto()" class="py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-semibold text-xs flex items-center justify-center gap-2">
+                        <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
+                        <span>Foto Ulang</span>
+                    </button>
+                    <button id="btn-submit-attendance" onclick="submitAttendance()" class="py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-display font-bold text-xs flex items-center justify-center gap-2 shadow-lg">
+                        <i data-lucide="check-circle-2" class="w-4 h-4"></i>
+                        <span>Kirim Absensi</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================= MODAL 3: PHOTO PREVIEW & DETAIL ================= -->
+        <div id="detail-modal" class="fixed inset-0 bg-slate-900/75 backdrop-blur-xs z-50 hidden flex items-center justify-center p-4">
+            <div class="bg-white w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl">
+                <div class="relative bg-black">
+                    <img id="detail-img" src="" alt="Bukti Foto" class="w-full max-h-80 object-contain mx-auto">
+                    <button onclick="closeDetailModal()" class="absolute top-3 right-3 p-2 rounded-full bg-black/60 text-white hover:bg-black">
+                        <i data-lucide="x" class="w-4 h-4"></i>
+                    </button>
+                </div>
+                <div class="p-4 space-y-2 text-xs">
+                    <div class="flex items-center justify-between">
+                        <span id="detail-type" class="font-display font-bold text-sm text-slate-800">Clock In</span>
+                        <span id="detail-status" class="px-2 py-0.5 rounded-md font-semibold bg-emerald-50 text-emerald-700">Tepat Waktu</span>
+                    </div>
+                    <p id="detail-emp" class="font-semibold text-slate-700">-</p>
+                    <p id="detail-time" class="text-slate-500">-</p>
+                    <p id="detail-loc" class="text-slate-500">-</p>
+                    <p id="detail-note" class="text-slate-600 italic bg-slate-50 p-2 rounded-lg border border-slate-100">-</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================= MODAL 4: KONFIRMASI RESET LOG ================= -->
+        <div id="confirm-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 hidden flex items-center justify-center p-4">
+            <div class="bg-white w-full max-w-xs rounded-2xl p-5 shadow-xl text-center space-y-3">
+                <div class="w-12 h-12 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center mx-auto">
+                    <i data-lucide="trash-2" class="w-6 h-6"></i>
+                </div>
+                <h3 class="font-display font-bold text-base text-slate-800">Hapus Semua Log Lokal?</h3>
+                <p class="text-xs text-slate-500">Data yang sudah terkirim ke Google Sheets tetap aman, namun riwayat di perangkat ini akan dihapus.</p>
+                <div class="grid grid-cols-2 gap-2 pt-2">
+                    <button onclick="closeConfirmModal()" class="py-2.5 rounded-xl bg-slate-100 text-slate-700 font-semibold text-xs">Batal</button>
+                    <button onclick="executeClearLogs()" class="py-2.5 rounded-xl bg-rose-600 text-white font-semibold text-xs">Ya, Hapus</button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // ==========================================
+        // 1. STATE & DEFAULT CONFIGURATION
+        // ==========================================
+        const STORAGE_KEYS = {
+            PROFILE: 'talenta_temp_profile',
+            LOGS: 'talenta_temp_logs',
+            CONFIG: 'talenta_temp_config'
+        };
+
+        let appState = {
+            profile: {
+                nik: '',
+                name: '',
+                dept: ''
+            },
+            config: {
+                gsheetUrl: '',
+                officeLat: -6.2088, // Default Jakarta
+                officeLng: 106.8456,
+                radiusMeter: 150,
+                shiftStart: '08:00',
+                shiftEnd: '17:00'
+            },
+            gps: {
+                lat: null,
+                lng: null,
+                accuracy: null,
+                distance: null,
+                inRadius: false,
+                address: 'Mendeteksi alamat lokasi...'
+            },
+            workMode: 'WFO',
+            pendingAction: null, // 'Clock In' | 'Clock Out'
+            capturedDataUrl: null,
+            cameraStream: null,
+            logs: []
+        };
+
+        let miniMap = null;
+        let userMarker = null;
+        let officeCircle = null;
+
+        // ==========================================
+        // 2. INITIALIZATION
+        // ==========================================
+        window.onload = function () {
+            lucide.createIcons();
+            loadFromStorage();
+            initLiveClock();
+            initMap();
+            refreshLocation();
+            renderProfile();
+            renderTodaySummary();
+            renderHistoryList();
+            updateSyncStatusBadge();
+
+            // Jika profil belum diisi, tampilkan modal identitas otomatis
+            if (!appState.profile.name || !appState.profile.nik) {
+                setTimeout(() => openProfileModal(), 400);
+            }
+        };
+
+        function loadFromStorage() {
+            try {
+                const savedProfile = localStorage.getItem(STORAGE_KEYS.PROFILE);
+                if (savedProfile) appState.profile = JSON.parse(savedProfile);
+
+                const savedConfig = localStorage.getItem(STORAGE_KEYS.CONFIG);
+                if (savedConfig) appState.config = { ...appState.config, ...JSON.parse(savedConfig) };
+
+                const savedLogs = localStorage.getItem(STORAGE_KEYS.LOGS);
+                if (savedLogs) appState.logs = JSON.parse(savedLogs);
+
+                // Populate settings inputs
+                document.getElementById('gsheet-url').value = appState.config.gsheetUrl || '';
+                document.getElementById('cfg-lat').value = appState.config.officeLat;
+                document.getElementById('cfg-lng').value = appState.config.officeLng;
+                document.getElementById('cfg-radius').value = appState.config.radiusMeter;
+                document.getElementById('cfg-start').value = appState.config.shiftStart;
+                document.getElementById('cfg-end').value = appState.config.shiftEnd;
+                document.getElementById('display-shift').textContent = `Office Hour (${appState.config.shiftStart} - ${appState.config.shiftEnd})`;
+            } catch (e) {
+                console.error('Gagal memuat data lokal:', e);
+            }
+        }
+
+        // ==========================================
+        // 3. REAL-TIME CLOCK & DATE (WIB)
+        // ==========================================
+        function initLiveClock() {
+            function updateClock() {
+                const now = new Date();
+                // Format waktu ke Asia/Jakarta (WIB)
+                const timeFormatter = new Intl.DateTimeFormat('id-ID', {
+                    timeZone: 'Asia/Jakarta',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: false
+                });
+                const dateFormatter = new Intl.DateTimeFormat('id-ID', {
+                    timeZone: 'Asia/Jakarta',
+                    weekday: 'long',
+                    day: 'numeric',
+                    month: 'long',
+                    year: 'numeric'
+                });
+
+                const timeStr = timeFormatter.format(now).replace(/\./g, ':');
+                const dateStr = dateFormatter.format(now);
+
+                document.getElementById('live-clock').innerHTML = `${timeStr} <span class="text-sm font-semibold text-slate-400">WIB</span>`;
+                document.getElementById('live-date').textContent = dateStr;
+            }
+            updateClock();
+            setInterval(updateClock, 1000);
+        }
+
+        function getJakartaDateTimeParts() {
+            const now = new Date();
+            const dateStr = new Intl.DateTimeFormat('id-ID', {
+                timeZone: 'Asia/Jakarta',
+                day: '2-digit', month: '2-digit', year: 'numeric'
+            }).format(now);
+            const timeStr = new Intl.DateTimeFormat('id-ID', {
+                timeZone: 'Asia/Jakarta',
+                hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+            }).format(now).replace(/\./g, ':');
+            const isoDate = new Intl.DateTimeFormat('en-CA', {
+                timeZone: 'Asia/Jakarta',
+                year: 'numeric', month: '2-digit', day: '2-digit'
+            }).format(now); // YYYY-MM-DD
+            return { dateStr, timeStr, isoDate, raw: now };
+        }
+
+        // ==========================================
+        // 4. GEOLOCATION, HAVERSINE & MINI MAP
+        // ==========================================
+        function initMap() {
+            miniMap = L.map('mini-map', {
+                zoomControl: false,
+                attributionControl: false
+            }).setView([appState.config.officeLat, appState.config.officeLng], 15);
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19
+            }).addTo(miniMap);
+
+            officeCircle = L.circle([appState.config.officeLat, appState.config.officeLng], {
+                color: '#3b49df',
+                fillColor: '#3b49df',
+                fillOpacity: 0.15,
+                radius: appState.config.radiusMeter
+            }).addTo(miniMap);
+        }
+
+        function refreshLocation() {
+            const accEl = document.getElementById('gps-accuracy');
+            const badgeEl = document.getElementById('radius-badge');
+            accEl.textContent = 'Mencari sinyal satelit GPS...';
+
+            if (!navigator.geolocation) {
+                showToast('Browser Anda tidak mendukung Geolocation GPS.', 'error');
+                accEl.textContent = 'GPS tidak didukung browser';
+                return;
+            }
+
+            navigator.geolocation.getCurrentPosition(
+                async (position) => {
+                    const lat = position.coords.latitude;
+                    const lng = position.coords.longitude;
+                    const acc = Math.round(position.coords.accuracy);
+
+                    appState.gps.lat = lat;
+                    appState.gps.lng = lng;
+                    appState.gps.accuracy = acc;
+
+                    // Hitung jarak ke kantor (Haversine)
+                    const dist = Math.round(calculateDistanceMeters(
+                        lat, lng,
+                        parseFloat(appState.config.officeLat),
+                        parseFloat(appState.config.officeLng)
+                    ));
+                    appState.gps.distance = dist;
+                    appState.gps.inRadius = dist <= parseFloat(appState.config.radiusMeter);
+
+                    document.getElementById('gps-coords').textContent = `Lat: ${lat.toFixed(6)}, Lng: ${lng.toFixed(6)}`;
+                    accEl.textContent = `Akurasi ±${acc}m • Jarak ke kantor: ${dist}m`;
+
+                    if (appState.gps.inRadius) {
+                        badgeEl.className = 'shrink-0 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200';
+                        badgeEl.textContent = 'Dalam Radius Kantor';
+                    } else {
+                        badgeEl.className = 'shrink-0 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200';
+                        badgeEl.textContent = 'Luar Radius (WFH/Luar)';
+                    }
+
+                    // Update Map
+                    if (miniMap) {
+                        miniMap.setView([lat, lng], 16);
+                        if (userMarker) miniMap.removeLayer(userMarker);
+                        userMarker = L.marker([lat, lng]).addTo(miniMap);
+                        if (officeCircle) {
+                            officeCircle.setLatLng([appState.config.officeLat, appState.config.officeLng]);
+                            officeCircle.setRadius(appState.config.radiusMeter);
+                        }
+                    }
+
+                    // Reverse Geocoding (OpenStreetMap Nominatim)
+                    try {
+                        const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`);
+                        const data = await res.json();
+                        if (data && data.display_name) {
+                            appState.gps.address = data.display_name;
+                            document.getElementById('gps-address').textContent = data.display_name;
+                        } else {
+                            appState.gps.address = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+                            document.getElementById('gps-address').textContent = appState.gps.address;
+                        }
+                    } catch (err) {
+                        appState.gps.address = `Koordinat (${lat.toFixed(5)}, ${lng.toFixed(5)})`;
+                        document.getElementById('gps-address').textContent = appState.gps.address;
+                    }
+                },
+                (error) => {
+                    console.warn('GPS Error:', error);
+                    accEl.textContent = 'Gagal mengakses GPS. Aktifkan izin lokasi.';
+                    badgeEl.className = 'shrink-0 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-rose-50 text-rose-700';
+                    badgeEl.textContent = 'GPS Mati';
+                    showToast('Mohon aktifkan izin Lokasi (GPS) pada browser Anda.', 'error');
+                },
+                { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
+            );
+        }
+
+        function calculateDistanceMeters(lat1, lon1, lat2, lon2) {
+            const R = 6371e3; // Radius bumi dalam meter
+            const φ1 = lat1 * Math.PI / 180;
+            const φ2 = lat2 * Math.PI / 180;
+            const Δφ = (lat2 - lat1) * Math.PI / 180;
+            const Δλ = (lon2 - lon1) * Math.PI / 180;
+
+            const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+                      Math.cos(φ1) * Math.cos(φ2) *
+                      Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            return R * c;
+        }
+
+        // ==========================================
+        // 5. EMPLOYEE PROFILE & WORK MODE
+        // ==========================================
+        function openProfileModal() {
+            document.getElementById('input-nik').value = appState.profile.nik || '';
+            document.getElementById('input-name').value = appState.profile.name || '';
+            document.getElementById('input-dept').value = appState.profile.dept || '';
+            document.getElementById('profile-modal').classList.remove('hidden');
+        }
+
+        function closeProfileModal() {
+            document.getElementById('profile-modal').classList.add('hidden');
+        }
+
+        function applyPresetEmployee() {
+            const val = document.getElementById('preset-employee').value;
+            if (!val) return;
+            const [nik, name, dept] = val.split('|');
+            document.getElementById('input-nik').value = nik;
+            document.getElementById('input-name').value = name;
+            document.getElementById('input-dept').value = dept;
+        }
+
+        function saveEmployeeProfile() {
+            const nik = document.getElementById('input-nik').value.trim();
+            const name = document.getElementById('input-name').value.trim();
+            const dept = document.getElementById('input-dept').value.trim();
+
+            if (!nik || !name || !dept) {
+                showToast('Harap lengkapi NIK, Nama Lengkap, dan Divisi.', 'error');
+                return;
+            }
+
+            appState.profile = { nik, name, dept };
+            localStorage.setItem(STORAGE_KEYS.PROFILE, JSON.stringify(appState.profile));
+            renderProfile();
+            renderTodaySummary();
+            closeProfileModal();
+            showToast(`Profil ${name} berhasil disimpan.`, 'success');
+        }
+
+        function renderProfile() {
+            const { nik, name, dept } = appState.profile;
+            if (name) {
+                document.getElementById('display-emp-name').textContent = name;
+                document.getElementById('display-emp-meta').textContent = `NIK: ${nik} • ${dept}`;
+                const initials = name.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
+                document.getElementById('emp-avatar').textContent = initials || 'KR';
+            } else {
+                document.getElementById('display-emp-name').textContent = 'Klik Ikon Kanan Isi Profil';
+                document.getElementById('display-emp-meta').textContent = 'NIK: - • Divisi: -';
+                document.getElementById('emp-avatar').textContent = '?';
+            }
+        }
+
+        function selectWorkMode(mode) {
+            appState.workMode = mode;
+            document.querySelectorAll('.mode-btn').forEach(btn => {
+                if (btn.dataset.mode === mode) {
+                    btn.className = 'mode-btn py-2 px-2 rounded-xl border-2 border-talenta-500 bg-indigo-50/70 text-talenta-700 font-semibold text-xs flex flex-col items-center gap-1 transition';
+                } else {
+                    btn.className = 'mode-btn py-2 px-2 rounded-xl border border-slate-200 bg-white text-slate-600 font-medium text-xs flex flex-col items-center gap-1 transition hover:bg-slate-50';
+                }
+            });
+        }
+
+        // ==========================================
+        // 6. SELFIE CAMERA & WATERMARKING
+        // ==========================================
+        function initiateAttendance(actionType) {
+            if (!appState.profile.name || !appState.profile.nik) {
+                showToast('Silakan isi Identitas Karyawan terlebih dahulu.', 'error');
+                openProfileModal();
+                return;
+            }
+
+            if (!appState.gps.lat) {
+                showToast('Menunggu titik koordinat GPS... Coba klik Refresh lokasi.', 'error');
+                refreshLocation();
+                return;
+            }
+
+            appState.pendingAction = actionType;
+            appState.capturedDataUrl = null;
+
+            const badge = document.getElementById('cam-action-badge');
+            badge.textContent = actionType.toUpperCase();
+            badge.className = actionType === 'Clock In'
+                ? 'px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-talenta-500 text-white'
+                : 'px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-600 text-white';
+
+            document.getElementById('camera-modal').classList.remove('hidden');
+            startCamera();
+        }
+
+        async function startCamera() {
+            const video = document.getElementById('camera-video');
+            const canvas = document.getElementById('camera-canvas');
+            const guide = document.getElementById('face-guide');
+            const fallback = document.getElementById('camera-fallback');
+            const ctrlCapture = document.getElementById('cam-controls-capture');
+            const ctrlConfirm = document.getElementById('cam-controls-confirm');
+
+            video.classList.remove('hidden');
+            canvas.classList.add('hidden');
+            guide.classList.remove('hidden');
+            fallback.classList.add('hidden');
+            ctrlCapture.classList.remove('hidden');
+            ctrlConfirm.classList.add('hidden');
+
+            try {
+                if (appState.cameraStream) {
+                    appState.cameraStream.getTracks().forEach(t => t.stop());
+                }
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'user', width: { ideal: 720 }, height: { ideal: 960 } },
+                    audio: false
+                });
+                appState.cameraStream = stream;
+                video.srcObject = stream;
+            } catch (err) {
+                console.warn('Kamera stream gagal:', err);
+                video.classList.add('hidden');
+                guide.classList.add('hidden');
+                ctrlCapture.classList.add('hidden');
+                fallback.classList.remove('hidden');
+            }
+        }
+
+        function closeCameraModal() {
+            if (appState.cameraStream) {
+                appState.cameraStream.getTracks().forEach(t => t.stop());
+                appState.cameraStream = null;
+            }
+            document.getElementById('camera-modal').classList.add('hidden');
+        }
+
+        function capturePhoto() {
+            const video = document.getElementById('camera-video');
+            const canvas = document.getElementById('camera-canvas');
+            const ctx = canvas.getContext('2d');
+
+            const width = video.videoWidth || 640;
+            const height = video.videoHeight || 480;
+            canvas.width = width;
+            canvas.height = height;
+
+            // Mirror flip horizontal agar sesuai tampilan selfie
+            ctx.save();
+            ctx.translate(width, 0);
+            ctx.scale(-1, 1);
+            ctx.drawImage(video, 0, 0, width, height);
+            ctx.restore();
+
+            drawWatermarkOnCanvas(ctx, width, height);
+
+            // Kompres ke JPEG kualitas 0.72 agar ringan disimpan & dikirim
+            appState.capturedDataUrl = canvas.toDataURL('image/jpeg', 0.72);
+
+            video.classList.add('hidden');
+            document.getElementById('face-guide').classList.add('hidden');
+            canvas.classList.remove('hidden');
+            document.getElementById('cam-controls-capture').classList.add('hidden');
+            document.getElementById('cam-controls-confirm').classList.remove('hidden');
+        }
+
+        function handleFallbackPhoto(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function (e) {
+                const img = new Image();
+                img.onload = function () {
+                    const canvas = document.getElementById('camera-canvas');
+                    const ctx = canvas.getContext('2d');
+                    const maxW = 720;
+                    const scale = maxW / img.width;
+                    canvas.width = maxW;
+                    canvas.height = img.height * scale;
+
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                    drawWatermarkOnCanvas(ctx, canvas.width, canvas.height);
+
+                    appState.capturedDataUrl = canvas.toDataURL('image/jpeg', 0.72);
+                    document.getElementById('camera-fallback').classList.add('hidden');
+                    canvas.classList.remove('hidden');
+                    document.getElementById('cam-controls-confirm').classList.remove('hidden');
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function drawWatermarkOnCanvas(ctx, width, height) {
+            const { dateStr, timeStr } = getJakartaDateTimeParts();
+            const barHeight = Math.max(85, height * 0.16);
+
+            // Overlay gelap di bagian bawah foto
+            ctx.fillStyle = 'rgba(15, 23, 42, 0.78)';
+            ctx.fillRect(0, height - barHeight, width, barHeight);
+
+            const fontSizeTitle = Math.max(14, Math.round(width * 0.032));
+            const fontSizeSub = Math.max(11, Math.round(width * 0.024));
+            const padding = Math.round(width * 0.03);
+            let yPos = height - barHeight + padding + fontSizeTitle;
+
+            ctx.fillStyle = '#ffffff';
+            ctx.font = `bold ${fontSizeTitle}px sans-serif`;
+            ctx.fillText(`${appState.pendingAction.toUpperCase()} • ${appState.profile.name} (${appState.profile.nik})`, padding, yPos);
+
+            yPos += fontSizeSub + 6;
+            ctx.fillStyle = '#93c5fd';
+            ctx.font = `600 ${fontSizeSub}px monospace`;
+            ctx.fillText(`${dateStr} ${timeStr} WIB | Mode: ${appState.workMode}`, padding, yPos);
+
+            yPos += fontSizeSub + 5;
+            ctx.fillStyle = '#cbd5e1';
+            ctx.font = `${fontSizeSub - 1}px monospace`;
+            const coordText = `GPS: ${appState.gps.lat?.toFixed(5)}, ${appState.gps.lng?.toFixed(5)} (${appState.gps.inRadius ? 'Dalam Radius' : 'Luar Radius'})`;
+            ctx.fillText(coordText, padding, yPos);
+        }
+
+        function retakePhoto() {
+            startCamera();
+        }
+
+        // ==========================================
+        // 7. SUBMIT ATTENDANCE & GOOGLE SHEETS SYNC
+        // ==========================================
+        async function submitAttendance() {
+            const btn = document.getElementById('btn-submit-attendance');
+            btn.disabled = true;
+            btn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i><span>Menyimpan...</span>`;
+            lucide.createIcons();
+
+            const { dateStr, timeStr, isoDate } = getJakartaDateTimeParts();
+            const note = document.getElementById('attendance-note').value.trim();
+
+            // Evaluasi ketepatan waktu (khusus Clock In)
+            let punctuality = 'Selesai Kerja';
+            if (appState.pendingAction === 'Clock In') {
+                const currentHHMM = timeStr.slice(0, 5);
+                punctuality = currentHHMM > appState.config.shiftStart ? 'Terlambat' : 'Tepat Waktu';
+            }
+
+            const record = {
+                id: 'ATT-' + Date.now(),
+                isoDate: isoDate,
+                tanggal: dateStr,
+                jam: timeStr,
+                nik: appState.profile.nik,
+                nama: appState.profile.name,
+                divisi: appState.profile.dept,
+                tipeAbsen: appState.pendingAction,
+                statusKetepatan: punctuality,
+                modeKerja: appState.workMode,
+                koordinat: `${appState.gps.lat.toFixed(6)}, ${appState.gps.lng.toFixed(6)}`,
+                jarakMeter: appState.gps.distance ?? 0,
+                statusRadius: appState.gps.inRadius ? 'Dalam Radius Kantor' : 'Luar Radius',
+                alamat: appState.gps.address,
+                catatan: note || '-',
+                foto: appState.capturedDataUrl,
+                synced: false
+            };
+
+            // Kirim ke Google Sheets jika URL sudah dikonfigurasi
+            if (appState.config.gsheetUrl) {
+                try {
+                    const payload = { ...record };
+                    delete payload.foto; // Hindari batas ukuran sel 50.000 karakter di Google Sheets
+
+                    await fetch(appState.config.gsheetUrl, {
+                        method: 'POST',
+                        mode: 'no-cors', // Diperlukan untuk Google Apps Script Web App
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    record.synced = true;
+                } catch (err) {
+                    console.error('Gagal kirim ke Google Sheets:', err);
+                    record.synced = false;
+                }
+            }
+
+            // Simpan ke LocalStorage (maksimal 50 log terakhir agar kuota browser aman)
+            appState.logs.unshift(record);
+            if (appState.logs.length > 50) appState.logs.pop();
+            localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify(appState.logs));
+
+            // Reset UI
+            document.getElementById('attendance-note').value = '';
+            btn.disabled = false;
+            btn.innerHTML = `<i data-lucide="check-circle-2" class="w-4 h-4"></i><span>Kirim Absensi</span>`;
+            lucide.createIcons();
+
+            closeCameraModal();
+            renderTodaySummary();
+            renderHistoryList();
+
+            if (record.synced) {
+                showToast(`${record.tipeAbsen} berhasil & tersinkron ke Google Sheets!`, 'success');
+            } else if (appState.config.gsheetUrl) {
+                showToast(`${record.tipeAbsen} tersimpan lokal (Cek koneksi Google Sheets).`, 'info');
+            } else {
+                showToast(`${record.tipeAbsen} berhasil dicatat secara lokal!`, 'success');
+            }
+        }
+
+        // ==========================================
+        // 8. RENDER TODAY SUMMARY & HISTORY LIST
+        // ==========================================
+        function renderTodaySummary() {
+            const { isoDate } = getJakartaDateTimeParts();
+            const todayLogs = appState.logs.filter(l => l.isoDate === isoDate && l.nik === appState.profile.nik);
+
+            const firstClockIn = [...todayLogs].reverse().find(l => l.tipeAbsen === 'Clock In');
+            const lastClockOut = todayLogs.find(l => l.tipeAbsen === 'Clock Out');
+
+            const badge = document.getElementById('today-attendance-badge');
+            if (firstClockIn && lastClockOut) {
+                badge.className = 'inline-flex items-center gap-1 font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md mt-0.5';
+                badge.textContent = 'Hadir Lengkap';
+            } else if (firstClockIn) {
+                badge.className = 'inline-flex items-center gap-1 font-semibold text-talenta-700 bg-indigo-50 px-2 py-0.5 rounded-md mt-0.5';
+                badge.textContent = 'Sedang Bekerja';
+            } else {
+                badge.className = 'inline-flex items-center gap-1 font-semibold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md mt-0.5';
+                badge.textContent = 'Belum Clock In';
+            }
+
+            if (firstClockIn) {
+                document.getElementById('today-clock-in').textContent = firstClockIn.jam.slice(0, 5);
+                document.getElementById('today-clock-in-status').textContent = `${firstClockIn.statusKetepatan} (${firstClockIn.modeKerja})`;
+            } else {
+                document.getElementById('today-clock-in').textContent = '--:--';
+                document.getElementById('today-clock-in-status').textContent = 'Menunggu absen masuk';
+            }
+
+            if (lastClockOut) {
+                document.getElementById('today-clock-out').textContent = lastClockOut.jam.slice(0, 5);
+                document.getElementById('today-clock-out-status').textContent = `${lastClockOut.modeKerja} • ${lastClockOut.statusRadius}`;
+            } else {
+                document.getElementById('today-clock-out').textContent = '--:--';
+                document.getElementById('today-clock-out-status').textContent = 'Menunggu absen pulang';
+            }
+        }
+
+        function renderHistoryList() {
+            const listEl = document.getElementById('attendance-list');
+            const total = appState.logs.length;
+            const onTime = appState.logs.filter(l => l.statusKetepatan === 'Tepat Waktu').length;
+            const late = appState.logs.filter(l => l.statusKetepatan === 'Terlambat').length;
+
+            document.getElementById('stat-total').textContent = total;
+            document.getElementById('stat-ontime').textContent = onTime;
+            document.getElementById('stat-late').textContent = late;
+
+            if (total === 0) {
+                listEl.innerHTML = `
+                    <div class="text-center py-10 px-4">
+                        <div class="w-12 h-12 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mx-auto mb-2.5">
+                            <i data-lucide="clipboard-list" class="w-6 h-6"></i>
+                        </div>
+                        <p class="text-xs font-semibold text-slate-600">Belum Ada Riwayat Absensi</p>
+                        <p class="text-[11px] text-slate-400 mt-0.5">Silakan lakukan Clock In pada tab Absensi.</p>
+                    </div>
+                `;
+                lucide.createIcons();
+                return;
+            }
+
+            listEl.innerHTML = appState.logs.map((item, idx) => {
+                const isClockIn = item.tipeAbsen === 'Clock In';
+                const statusBadge = item.statusKetepatan === 'Terlambat'
+                    ? `<span class="px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-50 text-rose-600">Terlambat</span>`
+                    : item.statusKetepatan === 'Tepat Waktu'
+                    ? `<span class="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 text-emerald-600">Tepat Waktu</span>`
+                    : `<span class="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-600">Pulang</span>`;
+
+                const syncIcon = item.synced
+                    ? `<span class="text-[10px] text-emerald-600 flex items-center gap-0.5"><i data-lucide="cloud-check" class="w-3 h-3"></i> Sheets</span>`
+                    : `<span class="text-[10px] text-slate-400 flex items-center gap-0.5"><i data-lucide="hard-drive" class="w-3 h-3"></i> Lokal</span>`;
+
+                return `
+                    <div onclick="openDetailModal(${idx})" class="cursor-pointer bg-slate-50/70 hover:bg-indigo-50/40 transition border border-slate-200/80 rounded-2xl p-3 flex items-center gap-3">
+                        <img src="${item.foto}" alt="Selfie" class="w-14 h-14 rounded-xl object-cover bg-slate-200 shrink-0 border border-slate-200">
+                        <div class="min-w-0 flex-1">
+                            <div class="flex items-center justify-between gap-1">
+                                <span class="text-xs font-bold ${isClockIn ? 'text-talenta-700' : 'text-rose-600'}">${item.tipeAbsen} • ${item.jam.slice(0, 5)} WIB</span>
+                                ${statusBadge}
+                            </div>
+                            <p class="text-[11px] font-semibold text-slate-700 truncate mt-0.5">${item.nama} (${item.nik})</p>
+                            <div class="flex items-center justify-between text-[10px] text-slate-500 mt-1">
+                                <span>${item.tanggal} • ${item.modeKerja}</span>
+                                ${syncIcon}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            lucide.createIcons();
+        }
+
+        function openDetailModal(index) {
+            const item = appState.logs[index];
+            if (!item) return;
+            document.getElementById('detail-img').src = item.foto;
+            document.getElementById('detail-type').textContent = `${item.tipeAbsen} (${item.modeKerja})`;
+            document.getElementById('detail-status').textContent = item.statusKetepatan;
+            document.getElementById('detail-emp').textContent = `${item.nama} — NIK: ${item.nik} (${item.divisi})`;
+            document.getElementById('detail-time').textContent = `Waktu: ${item.tanggal}, Pukul ${item.jam} WIB`;
+            document.getElementById('detail-loc').textContent = `Lokasi: ${item.statusRadius} (${item.jarakMeter}m) • ${item.alamat}`;
+            document.getElementById('detail-note').textContent = `Catatan: ${item.catatan}`;
+            document.getElementById('detail-modal').classList.remove('hidden');
+        }
+
+        function closeDetailModal() {
+            document.getElementById('detail-modal').classList.add('hidden');
+        }
+
+        // ==========================================
+        // 9. SETTINGS, CSV EXPORT & UTILITIES
+        // ==========================================
+        function saveSettings() {
+            appState.config.gsheetUrl = document.getElementById('gsheet-url').value.trim();
+            appState.config.officeLat = parseFloat(document.getElementById('cfg-lat').value) || -6.2088;
+            appState.config.officeLng = parseFloat(document.getElementById('cfg-lng').value) || 106.8456;
+            appState.config.radiusMeter = parseInt(document.getElementById('cfg-radius').value) || 150;
+            appState.config.shiftStart = document.getElementById('cfg-start').value || '08:00';
+            appState.config.shiftEnd = document.getElementById('cfg-end').value || '17:00';
+
+            localStorage.setItem(STORAGE_KEYS.CONFIG, JSON.stringify(appState.config));
+            document.getElementById('display-shift').textContent = `Office Hour (${appState.config.shiftStart} - ${appState.config.shiftEnd})`;
+            updateSyncStatusBadge();
+            refreshLocation();
+            showToast('Pengaturan berhasil disimpan!', 'success');
+        }
+
+        function updateSyncStatusBadge() {
+            const dot = document.getElementById('gsheet-dot');
+            const text = document.getElementById('gsheet-status-text');
+            if (appState.config.gsheetUrl && appState.config.gsheetUrl.startsWith('https://script.google.com/')) {
+                dot.className = 'w-2 h-2 rounded-full bg-emerald-400';
+                text.textContent = 'Google Sheets Aktif';
+            } else {
+                dot.className = 'w-2 h-2 rounded-full bg-amber-400 animate-pulse';
+                text.textContent = 'Lokal / Belum Sync';
+            }
+        }
+
+        function useCurrentLocationAsOffice() {
+            if (!appState.gps.lat || !appState.gps.lng) {
+                showToast('Tunggu GPS terdeteksi terlebih dahulu.', 'error');
+                refreshLocation();
+                return;
+            }
+            document.getElementById('cfg-lat').value = appState.gps.lat.toFixed(6);
+            document.getElementById('cfg-lng').value = appState.gps.lng.toFixed(6);
+            saveSettings();
+        }
+
+        async function testGoogleSheetConnection() {
+            const url = document.getElementById('gsheet-url').value.trim();
+            if (!url) {
+                showToast('Masukkan URL Web App Google Apps Script terlebih dahulu.', 'error');
+                return;
+            }
+            saveSettings();
+            const { dateStr, timeStr } = getJakartaDateTimeParts();
+            try {
+                await fetch(url, {
+                    method: 'POST',
+                    mode: 'no-cors',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        tanggal: dateStr,
+                        jam: timeStr,
+                        nik: appState.profile.nik || 'TEST-001',
+                        nama: appState.profile.name || 'Tes Koneksi ITDS',
+                        divisi: appState.profile.dept || 'IT Department',
+                        tipeAbsen: 'TES KONEKSI',
+                        statusKetepatan: 'OK',
+                        modeKerja: 'System Check',
+                        koordinat: `${appState.gps.lat || 0}, ${appState.gps.lng || 0}`,
+                        jarakMeter: 0,
+                        statusRadius: 'Test',
+                        alamat: 'Ping dari Web Live Attendance',
+                        catatan: 'Verifikasi integrasi Google Sheets berhasil'
+                    })
+                });
+                showToast('Data tes terkirim! Periksa baris baru di Google Sheets Anda.', 'success');
+            } catch (e) {
+                showToast('Gagal mengirim tes ke URL tersebut.', 'error');
+            }
+        }
+
+        function copyAppsScript() {
+            const textarea = document.getElementById('apps-script-code');
+            textarea.select();
+            textarea.setSelectionRange(0, 99999);
+            document.execCommand('copy');
+            showToast('Kode Google Apps Script berhasil disalin!', 'success');
+        }
+
+        function exportToCSV() {
+            if (appState.logs.length === 0) {
+                showToast('Belum ada data absensi untuk diekspor.', 'error');
+                return;
+            }
+
+            const headers = [
+                'Tanggal', 'Jam (WIB)', 'NIK', 'Nama Karyawan', 'Divisi',
+                'Tipe Absen', 'Status Ketepatan', 'Mode Kerja', 'Koordinat',
+                'Jarak Kantor (m)', 'Status Radius', 'Alamat', 'Catatan', 'Status Sync'
+            ];
+
+            const rows = appState.logs.map(l => [
+                l.tanggal, l.jam, l.nik, l.nama, l.divisi,
+                l.tipeAbsen, l.statusKetepatan, l.modeKerja, l.koordinat,
+                l.jarakMeter, l.statusRadius, l.alamat, l.catatan,
+                l.synced ? 'Terkirim' : 'Lokal'
+            ].map(val => `"${String(val).replace(/"/g, '""')}"`).join(','));
+
+            const csvContent = '\uFEFF' + [headers.join(','), ...rows].join('\n');
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.setAttribute('download', `Rekap_Absensi_${new Date().toISOString().slice(0, 10)}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            showToast('File CSV berhasil diunduh!', 'success');
+        }
+
+        function confirmClearLogs() {
+            document.getElementById('confirm-modal').classList.remove('hidden');
+        }
+
+        function closeConfirmModal() {
+            document.getElementById('confirm-modal').classList.add('hidden');
+        }
+
+        function executeClearLogs() {
+            appState.logs = [];
+            localStorage.removeItem(STORAGE_KEYS.LOGS);
+            renderTodaySummary();
+            renderHistoryList();
+            closeConfirmModal();
+            showToast('Semua log absensi lokal telah dibersihkan.', 'info');
+        }
+
+        // ==========================================
+        // 10. NAVIGATION & TOAST
+        // ==========================================
+        function switchTab(tabName) {
+            ['home', 'history', 'settings'].forEach(t => {
+                document.getElementById(`tab-${t}`).classList.add('hidden');
+                const nav = document.getElementById(`nav-${t}`);
+                nav.className = 'nav-btn flex flex-col items-center gap-1 py-1 px-3 text-slate-400 hover:text-slate-600 font-medium';
+            });
+
+            document.getElementById(`tab-${tabName}`).classList.remove('hidden');
+            const activeNav = document.getElementById(`nav-${tabName}`);
+            activeNav.className = 'nav-btn flex flex-col items-center gap-1 py-1 px-3 text-talenta-600 font-semibold';
+
+            if (tabName === 'home' && miniMap) {
+                setTimeout(() => miniMap.invalidateSize(), 150);
+            }
+        }
+
+        let toastTimer = null;
+        function showToast(message, type = 'info') {
+            const toast = document.getElementById('toast');
+            const icon = document.getElementById('toast-icon');
+            const msg = document.getElementById('toast-msg');
+
+            msg.textContent = message;
+            if (type === 'success') {
+                icon.setAttribute('data-lucide', 'check-circle-2');
+                icon.className = 'w-5 h-5 text-emerald-400 shrink-0';
+            } else if (type === 'error') {
+                icon.setAttribute('data-lucide', 'alert-circle');
+                icon.className = 'w-5 h-5 text-rose-400 shrink-0';
+            } else {
+                icon.setAttribute('data-lucide', 'info');
+                icon.className = 'w-5 h-5 text-indigo-400 shrink-0';
+            }
+            lucide.createIcons();
+
+            toast.classList.remove('opacity-0', '-translate-y-4');
+            toast.classList.add('opacity-100', 'translate-y-0');
+
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => {
+                toast.classList.remove('opacity-100', 'translate-y-0');
+                toast.classList.add('opacity-0', '-translate-y-4');
+            }, 3500);
+        }
+    </script>
+</body>
+</html>
