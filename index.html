@@ -115,8 +115,8 @@
                             <p id="display-emp-pos" class="text-[11px] text-indigo-300 truncate">Job Position: -</p>
                         </div>
                     </div>
-                    <button onclick="openProfileModal()" class="p-2 bg-white/15 hover:bg-white/25 rounded-xl text-white transition shrink-0" title="Ganti / Isi Profil Karyawan">
-                        <i data-lucide="user-pen" class="w-4 h-4"></i>
+                    <button onclick="openProfileModal()" class="p-2 bg-white/15 hover:bg-white/25 rounded-xl text-white transition shrink-0" title="Login / Ganti Akun Karyawan">
+                        <i data-lucide="key-round" class="w-4 h-4"></i>
                     </button>
                 </div>
             </div>
@@ -326,17 +326,49 @@
                             </button>
                         </div>
                         <p class="text-[11px] text-slate-500 mb-2">
-                            1. Buka Google Sheets baru &rarr; Klik menu <b>Ekstensi (Extensions) &gt; Apps Script</b>.<br>
-                            2. Hapus kode lama di <code>Code.gs</code>, tempel kode di bawah (sudah sesuai <b>10 kolom standar Talenta</b> + Link Foto Drive), lalu klik <b>Deploy &gt; New deployment &gt; Web app</b> (Akses: <i>Anyone</i>).<br>
-                            3. Salin URL Web App yang muncul ke kolom di atas.
+                            1. Buka Google Sheets baru &rarr; Buat 2 tab: <b>Attendance_Log</b> dan <b>Master_Employees</b> (Kolom: <code>Employee ID | Full Name | Organization | Job Position | PIN | Status</code>).<br>
+                            2. Klik menu <b>Ekstensi (Extensions) &gt; Apps Script</b>, tempel kode di bawah, lalu klik <b>Deploy &gt; New deployment &gt; Web app</b> (Akses: <i>Anyone</i>).<br>
+                            3. Salin URL Web App ke kolom di atas agar verifikasi PIN karyawan berjalan otomatis.
                         </p>
                         <textarea id="apps-script-code" readonly rows="8" class="w-full text-[11px] font-mono bg-slate-900 text-emerald-300 p-3 rounded-xl border border-slate-700 focus:outline-none">const FOLDER_FOTO_NAMA = "Foto_Absensi_Talenta";
+const SHEET_LOG = "Attendance_Log";
+const SHEET_MASTER = "Master_Employees";
 
 function doPost(e) {
   var lock = LockService.getScriptLock();
   lock.tryLock(10000);
   try {
-    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var data = JSON.parse(e.postData.contents);
+
+    // Pastikan sheet Master_Employees tersedia (buat template jika belum ada)
+    var masterSheet = ss.getSheetByName(SHEET_MASTER);
+    if (!masterSheet) {
+      masterSheet = ss.insertSheet(SHEET_MASTER);
+      masterSheet.appendRow(["Employee ID", "Full Name", "Organization", "Job Position", "PIN", "Status"]);
+      masterSheet.getRange(1, 1, 1, 6).setFontWeight("bold").setBackground("#1E293B").setFontColor("#FFFFFF");
+      masterSheet.getRange(2, 1).setNumberFormat("@");
+      masterSheet.getRange(2, 5).setNumberFormat("@");
+      masterSheet.appendRow(["010120301", "Agung Surya Pratama", "Sales", "Sales Executive", "123456", "Active"]);
+    }
+
+    // Validasi Employee ID & PIN terhadap Master_Employees
+    var empValid = verifikasiKaryawan(masterSheet, String(data.employeeId || "").trim(), String(data.pin || "").trim());
+    if (!empValid.valid) {
+      return ContentService.createTextOutput(JSON.stringify({ "status": "unauthorized", "message": empValid.message }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // Jika hanya permintaan Login / Cek Akun
+    if (data.action === "verify_login") {
+      return ContentService.createTextOutput(JSON.stringify({
+        "status": "success",
+        "employee": empValid.employee
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // Proses simpan absensi ke Attendance_Log
+    var sheet = ss.getSheetByName(SHEET_LOG) || ss.getActiveSheet();
     if (sheet.getLastRow() === 0) {
       var headers = [
         "Date", "Check Time", "Type", "Employee ID", "Full Name",
@@ -347,24 +379,22 @@ function doPost(e) {
       sheet.setFrozenRows(1);
     }
 
-    var data = JSON.parse(e.postData.contents);
     var photoUrl = "-";
     if (data.photo && data.photo.indexOf("data:image") === 0) {
-      photoUrl = simpanFotoKeDrive(data.photo, data.employeeId, data.fullName, data.type, data.date);
+      photoUrl = simpanFotoKeDrive(data.photo, empValid.employee.employeeId, empValid.employee.fullName, data.type, data.date);
     }
 
     var nextRow = sheet.getLastRow() + 1;
-    // Paksa format teks (@) pada Employee ID agar angka 0 di depan (mis. 010120301) tidak hilang
     sheet.getRange(nextRow, 4).setNumberFormat("@");
 
     sheet.getRange(nextRow, 1, 1, 11).setValues([[
       data.date,
       data.checkTime,
       data.type,
-      String(data.employeeId),
-      data.fullName,
-      data.organization,
-      data.jobPosition,
+      String(empValid.employee.employeeId),
+      empValid.employee.fullName,
+      empValid.employee.organization,
+      empValid.employee.jobPosition,
       data.locationAddress,
       data.locationCoordinate,
       data.description,
@@ -379,6 +409,32 @@ function doPost(e) {
   } finally {
     lock.releaseLock();
   }
+}
+
+function verifikasiKaryawan(sheet, empId, pin) {
+  var rows = sheet.getDataRange().getValues();
+  for (var i = 1; i < rows.length; i++) {
+    var rowId = String(rows[i][0]).trim();
+    var rowName = String(rows[i][1]).trim();
+    var rowOrg = String(rows[i][2]).trim();
+    var rowPos = String(rows[i][3]).trim();
+    var rowPin = String(rows[i][4]).trim();
+    var rowStatus = String(rows[i][5] || "Active").trim().toLowerCase();
+
+    if (rowId === empId) {
+      if (rowStatus !== "active" && rowStatus !== "aktif") {
+        return { valid: false, message: "Akun karyawan berstatus Non-Aktif." };
+      }
+      if (rowPin !== pin) {
+        return { valid: false, message: "PIN Keamanan salah. Hubungi HR / ITDS." };
+      }
+      return {
+        valid: true,
+        employee: { employeeId: rowId, fullName: rowName, organization: rowOrg, jobPosition: rowPos }
+      };
+    }
+  }
+  return { valid: false, message: "Employee ID tidak terdaftar di Master Karyawan." };
 }
 
 function simpanFotoKeDrive(base64Data, empId, fullName, type, dateStr) {
@@ -489,43 +545,43 @@ function simpanFotoKeDrive(base64Data, empId, fullName, type, dateStr) {
                     </div>
                     <button onclick="closeProfileModal()" class="p-1.5 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200">
                         <i data-lucide="x" class="w-4 h-4"></i>
+        <!-- ================= MODAL 1: LOGIN & VERIFIKASI KARYAWAN ================= -->
+        <div id="profile-modal" class="fixed inset-0 bg-slate-900/70 backdrop-blur-xs z-50 hidden flex items-end sm:items-center justify-center p-0 sm:p-4">
+            <div class="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl space-y-4 animate-slide-up">
+                <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+                    <div class="flex items-center gap-2.5">
+                        <div class="w-9 h-9 rounded-xl bg-indigo-50 text-talenta-600 flex items-center justify-center">
+                            <i data-lucide="shield-check" class="w-5 h-5"></i>
+                        </div>
+                        <div>
+                            <h3 class="font-display font-bold text-base text-slate-800">Verifikasi Akun Karyawan</h3>
+                            <p class="text-xs text-slate-500">Masuk dengan Employee ID & PIN terdaftar</p>
+                        </div>
+                    </div>
+                    <button onclick="closeProfileModal()" class="p-1.5 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200">
+                        <i data-lucide="x" class="w-4 h-4"></i>
                     </button>
                 </div>
 
-                <div>
-                    <label class="block text-xs font-bold text-slate-700 mb-1">Pilih Cepat Karyawan (Preset)</label>
-                    <select id="preset-employee" onchange="applyPresetEmployee()" class="w-full text-xs px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:outline-none focus:border-talenta-500">
-                        <option value="">-- Ketik Manual di Bawah / Pilih Preset --</option>
-                        <option value="010120301|Agung Surya Pratama|Sales|Sales Executive">010120301 - Agung Surya Pratama (Sales - Sales Executive)</option>
-                        <option value="010120302|Budi Santoso|Finance|Finance & Accounting Staff">010120302 - Budi Santoso (Finance - Finance & Accounting Staff)</option>
-                        <option value="010120303|Siti Aminah|Sales|Admin Sales">010120303 - Siti Aminah (Sales - Admin Sales)</option>
-                        <option value="010120304|Rizky Pratama|ITDS|IT Support & Infrastructure">010120304 - Rizky Pratama (ITDS - IT Support & Infrastructure)</option>
-                    </select>
+                <div class="bg-amber-50 border border-amber-200/80 rounded-xl p-3 text-[11px] text-amber-800 flex items-start gap-2">
+                    <i data-lucide="lock" class="w-4 h-4 text-amber-600 shrink-0 mt-0.5"></i>
+                    <span>Nama, Organization, dan Jabatan akan ditarik otomatis dari database HR setelah Employee ID & PIN terverifikasi.</span>
                 </div>
 
-                <div class="space-y-2.5">
+                <div class="space-y-3">
                     <div>
                         <label class="block text-xs font-bold text-slate-700 mb-1">Employee ID *</label>
-                        <input type="text" id="input-nik" placeholder="Contoh: 010120301" class="w-full text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-talenta-500 font-mono">
+                        <input type="text" id="input-nik" placeholder="Masukkan Employee ID (Contoh: 010120301)" class="w-full text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-talenta-500 font-mono">
                     </div>
                     <div>
-                        <label class="block text-xs font-bold text-slate-700 mb-1">Full Name *</label>
-                        <input type="text" id="input-name" placeholder="Contoh: Agung Surya Pratama" class="w-full text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-talenta-500">
-                    </div>
-                    <div class="grid grid-cols-2 gap-2">
-                        <div>
-                            <label class="block text-xs font-bold text-slate-700 mb-1">Organization *</label>
-                            <input type="text" id="input-dept" placeholder="Contoh: Sales" class="w-full text-xs px-3 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-talenta-500">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-bold text-slate-700 mb-1">Job Position *</label>
-                            <input type="text" id="input-pos" placeholder="Contoh: Sales Executive" class="w-full text-xs px-3 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-talenta-500">
-                        </div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">PIN Akses Karyawan (6 Digit) *</label>
+                        <input type="password" inputmode="numeric" maxlength="6" id="input-pin" placeholder="••••••" class="w-full text-sm tracking-widest px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-talenta-500 font-mono">
                     </div>
                 </div>
 
-                <button onclick="saveEmployeeProfile()" class="w-full py-3 rounded-xl bg-talenta-600 hover:bg-talenta-700 text-white font-display font-bold text-sm shadow-md transition">
-                    Simpan Identitas Karyawan
+                <button id="btn-verify-login" onclick="saveEmployeeProfile()" class="w-full py-3 rounded-xl bg-talenta-600 hover:bg-talenta-700 text-white font-display font-bold text-sm shadow-md transition flex items-center justify-center gap-2">
+                    <i data-lucide="log-in" class="w-4 h-4"></i>
+                    <span>Verifikasi & Masuk</span>
                 </button>
             </div>
         </div>
@@ -647,9 +703,11 @@ function simpanFotoKeDrive(base64Data, empId, fullName, type, dateStr) {
         let appState = {
             profile: {
                 employeeId: '',
+                pin: '',
                 fullName: '',
                 organization: '',
-                jobPosition: ''
+                jobPosition: '',
+                verified: false
             },
             config: {
                 gsheetUrl: '',
@@ -705,9 +763,11 @@ function simpanFotoKeDrive(base64Data, empId, fullName, type, dateStr) {
                     const parsed = JSON.parse(savedProfile);
                     appState.profile = {
                         employeeId: parsed.employeeId || parsed.nik || '',
+                        pin: parsed.pin || '',
                         fullName: parsed.fullName || parsed.name || '',
                         organization: parsed.organization || parsed.dept || '',
-                        jobPosition: parsed.jobPosition || parsed.pos || ''
+                        jobPosition: parsed.jobPosition || parsed.pos || '',
+                        verified: Boolean(parsed.verified)
                     };
                 }
 
@@ -731,178 +791,155 @@ function simpanFotoKeDrive(base64Data, empId, fullName, type, dateStr) {
         }
 
         // ==========================================
-        // 3. REAL-TIME CLOCK & DATE (WIB)
+        // 3. LIVE CLOCK & JAKARTA DATE FORMATTER
         // ==========================================
+        function getJakartaDateTimeParts() {
+            const now = new Date();
+            const fmtDate = new Intl.DateTimeFormat('en-CA', {
+                timeZone: 'Asia/Jakarta',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit'
+            });
+            const fmtTime = new Intl.DateTimeFormat('en-GB', {
+                timeZone: 'Asia/Jakarta',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false
+            });
+            const fmtDisplayDate = new Intl.DateTimeFormat('id-ID', {
+                timeZone: 'Asia/Jakarta',
+                weekday: 'long',
+                day: 'numeric',
+                month: 'long',
+                year: 'numeric'
+            });
+
+            return {
+                isoDate: fmtDate.format(now), // YYYY-MM-DD
+                timeStr: fmtTime.format(now), // HH:mm:ss
+                displayDate: fmtDisplayDate.format(now)
+            };
+        }
+
         function initLiveClock() {
-            function updateClock() {
-                const now = new Date();
-                // Format waktu ke Asia/Jakarta (WIB)
-                const timeFormatter = new Intl.DateTimeFormat('id-ID', {
-                    timeZone: 'Asia/Jakarta',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    second: '2-digit',
-                    hour12: false
-                });
-                const dateFormatter = new Intl.DateTimeFormat('id-ID', {
-                    timeZone: 'Asia/Jakarta',
-                    weekday: 'long',
-                    day: 'numeric',
-                    month: 'long',
-                    year: 'numeric'
-                });
-
-                const timeStr = timeFormatter.format(now).replace(/\./g, ':');
-                const dateStr = dateFormatter.format(now);
-
-                document.getElementById('live-clock').innerHTML = `${timeStr} <span class="text-sm font-semibold text-slate-400">WIB</span>`;
-                document.getElementById('live-date').textContent = dateStr;
-            }
+            const updateClock = () => {
+                const { timeStr, displayDate } = getJakartaDateTimeParts();
+                const clockEl = document.getElementById('live-clock');
+                const dateEl = document.getElementById('live-date');
+                if (clockEl) {
+                    clockEl.innerHTML = `${timeStr} <span class="text-sm font-semibold text-slate-400">WIB</span>`;
+                }
+                if (dateEl) {
+                    dateEl.textContent = displayDate;
+                }
+            };
             updateClock();
             setInterval(updateClock, 1000);
         }
 
-        function getJakartaDateTimeParts() {
-            const now = new Date();
-            const dateStr = new Intl.DateTimeFormat('id-ID', {
-                timeZone: 'Asia/Jakarta',
-                day: '2-digit', month: '2-digit', year: 'numeric'
-            }).format(now);
-            const timeStr = new Intl.DateTimeFormat('id-ID', {
-                timeZone: 'Asia/Jakarta',
-                hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
-            }).format(now).replace(/\./g, ':');
-            const isoDate = new Intl.DateTimeFormat('en-CA', {
-                timeZone: 'Asia/Jakarta',
-                year: 'numeric', month: '2-digit', day: '2-digit'
-            }).format(now); // YYYY-MM-DD
-            return { dateStr, timeStr, isoDate, raw: now };
+        // ==========================================
+        // 4. GEOLOCATION, GEOFENCING & MINI MAP
+        // ==========================================
+        function calculateDistanceMeters(lat1, lon1, lat2, lon2) {
+            const R = 6371e3;
+            const toRad = deg => (deg * Math.PI) / 180;
+            const dLat = toRad(lat2 - lat1);
+            const dLon = toRad(lon2 - lon1);
+            const a =
+                Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+                Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            return Math.round(R * c);
         }
 
-        // ==========================================
-        // 4. GEOLOCATION, HAVERSINE & MINI MAP
-        // ==========================================
         function initMap() {
-            miniMap = L.map('mini-map', {
-                zoomControl: false,
-                attributionControl: false
-            }).setView([appState.config.officeLat, appState.config.officeLng], 15);
+            const { officeLat, officeLng, radiusMeter } = appState.config;
+            miniMap = L.map('mini-map', { zoomControl: false, attributionControl: false }).setView([officeLat, officeLng], 16);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(miniMap);
 
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                maxZoom: 19
-            }).addTo(miniMap);
-
-            officeCircle = L.circle([appState.config.officeLat, appState.config.officeLng], {
+            officeCircle = L.circle([officeLat, officeLng], {
                 color: '#3b49df',
                 fillColor: '#3b49df',
                 fillOpacity: 0.15,
-                radius: appState.config.radiusMeter
+                radius: radiusMeter
             }).addTo(miniMap);
+
+            userMarker = L.marker([officeLat, officeLng]).addTo(miniMap);
         }
 
         function refreshLocation() {
             const accEl = document.getElementById('gps-accuracy');
             const badgeEl = document.getElementById('radius-badge');
-            accEl.textContent = 'Mencari sinyal satelit GPS...';
+            accEl.textContent = 'Mendeteksi titik koordinat GPS...';
 
             if (!navigator.geolocation) {
-                showToast('Browser Anda tidak mendukung Geolocation GPS.', 'error');
-                accEl.textContent = 'GPS tidak didukung browser';
+                accEl.textContent = 'Browser tidak mendukung GPS';
                 return;
             }
 
             navigator.geolocation.getCurrentPosition(
-                async (position) => {
-                    const lat = position.coords.latitude;
-                    const lng = position.coords.longitude;
-                    const acc = Math.round(position.coords.accuracy);
+                async (pos) => {
+                    const lat = pos.coords.latitude;
+                    const lng = pos.coords.longitude;
+                    const acc = Math.round(pos.coords.accuracy);
+                    const dist = calculateDistanceMeters(lat, lng, appState.config.officeLat, appState.config.officeLng);
+                    const inRadius = dist <= appState.config.radiusMeter;
 
                     appState.gps.lat = lat;
                     appState.gps.lng = lng;
                     appState.gps.accuracy = acc;
-
-                    // Hitung jarak ke kantor (Haversine)
-                    const dist = Math.round(calculateDistanceMeters(
-                        lat, lng,
-                        parseFloat(appState.config.officeLat),
-                        parseFloat(appState.config.officeLng)
-                    ));
                     appState.gps.distance = dist;
-                    appState.gps.inRadius = dist <= parseFloat(appState.config.radiusMeter);
+                    appState.gps.inRadius = inRadius;
 
+                    accEl.textContent = `Akurasi GPS: ±${acc}m • Jarak ke kantor: ${dist}m`;
                     document.getElementById('gps-coords').textContent = `Coordinate: ${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-                    accEl.textContent = `Akurasi ±${acc}m • Jarak ke kantor: ${dist}m`;
 
-                    if (appState.gps.inRadius) {
+                    if (inRadius) {
                         badgeEl.className = 'shrink-0 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200';
-                        badgeEl.textContent = 'Dalam Radius Kantor';
+                        badgeEl.textContent = `Dalam Radius (${dist}m)`;
                     } else {
                         badgeEl.className = 'shrink-0 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200';
-                        badgeEl.textContent = 'Luar Radius (WFH/Luar)';
+                        badgeEl.textContent = `Luar Radius (${dist}m)`;
                     }
 
-                    // Update Map
-                    if (miniMap) {
+                    if (miniMap && userMarker && officeCircle) {
+                        userMarker.setLatLng([lat, lng]);
+                        officeCircle.setLatLng([appState.config.officeLat, appState.config.officeLng]);
+                        officeCircle.setRadius(appState.config.radiusMeter);
                         miniMap.setView([lat, lng], 16);
-                        if (userMarker) miniMap.removeLayer(userMarker);
-                        userMarker = L.marker([lat, lng]).addTo(miniMap);
-                        if (officeCircle) {
-                            officeCircle.setLatLng([appState.config.officeLat, appState.config.officeLng]);
-                            officeCircle.setRadius(appState.config.radiusMeter);
-                        }
                     }
 
-                    // Reverse Geocoding (OpenStreetMap Nominatim)
-                    const addrInput = document.getElementById('gps-address-input');
+                    // Reverse Geocoding Address via OpenStreetMap Nominatim
                     try {
-                        const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`);
-                        const data = await res.json();
-                        if (data && data.display_name) {
-                            appState.gps.address = data.display_name;
-                            addrInput.value = data.display_name;
-                        } else {
-                            appState.gps.address = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-                            addrInput.value = appState.gps.address;
+                        const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18`);
+                        const geo = await res.json();
+                        if (geo && geo.display_name) {
+                            appState.gps.address = geo.display_name;
+                            document.getElementById('gps-address-input').value = geo.display_name;
                         }
-                    } catch (err) {
-                        appState.gps.address = `Koordinat (${lat.toFixed(6)}, ${lng.toFixed(6)})`;
-                        addrInput.value = appState.gps.address;
+                    } catch (e) {
+                        appState.gps.address = `Lat ${lat.toFixed(6)}, Lng ${lng.toFixed(6)}`;
+                        document.getElementById('gps-address-input').value = appState.gps.address;
                     }
                 },
-                (error) => {
-                    console.warn('GPS Error:', error);
-                    accEl.textContent = 'Gagal mengakses GPS. Aktifkan izin lokasi.';
-                    badgeEl.className = 'shrink-0 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-rose-50 text-rose-700';
-                    badgeEl.textContent = 'GPS Mati';
-                    document.getElementById('gps-address-input').value = 'GPS tidak aktif';
-                    showToast('Mohon aktifkan izin Lokasi (GPS) pada browser Anda.', 'error');
+                (err) => {
+                    accEl.textContent = 'Izin lokasi ditolak / GPS tidak aktif';
+                    badgeEl.className = 'shrink-0 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-rose-50 text-rose-600';
+                    badgeEl.textContent = 'GPS Error';
                 },
-                { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
+                { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
             );
         }
 
-        function calculateDistanceMeters(lat1, lon1, lat2, lon2) {
-            const R = 6371e3; // Radius bumi dalam meter
-            const φ1 = lat1 * Math.PI / 180;
-            const φ2 = lat2 * Math.PI / 180;
-            const Δφ = (lat2 - lat1) * Math.PI / 180;
-            const Δλ = (lon2 - lon1) * Math.PI / 180;
-
-            const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-                      Math.cos(φ1) * Math.cos(φ2) *
-                      Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
-            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-            return R * c;
-        }
-
         // ==========================================
-        // 5. EMPLOYEE PROFILE & WORK MODE
+        // 5. EMPLOYEE PROFILE, PIN VERIFICATION & WORK MODE
         // ==========================================
         function openProfileModal() {
             document.getElementById('input-nik').value = appState.profile.employeeId || '';
-            document.getElementById('input-name').value = appState.profile.fullName || '';
-            document.getElementById('input-dept').value = appState.profile.organization || '';
-            document.getElementById('input-pos').value = appState.profile.jobPosition || '';
+            document.getElementById('input-pin').value = appState.profile.pin || '';
             document.getElementById('profile-modal').classList.remove('hidden');
         }
 
@@ -910,33 +947,79 @@ function simpanFotoKeDrive(base64Data, empId, fullName, type, dateStr) {
             document.getElementById('profile-modal').classList.add('hidden');
         }
 
-        function applyPresetEmployee() {
-            const val = document.getElementById('preset-employee').value;
-            if (!val) return;
-            const [employeeId, fullName, organization, jobPosition] = val.split('|');
-            document.getElementById('input-nik').value = employeeId;
-            document.getElementById('input-name').value = fullName;
-            document.getElementById('input-dept').value = organization;
-            document.getElementById('input-pos').value = jobPosition || '';
-        }
-
-        function saveEmployeeProfile() {
+        async function saveEmployeeProfile() {
             const employeeId = document.getElementById('input-nik').value.trim();
-            const fullName = document.getElementById('input-name').value.trim();
-            const organization = document.getElementById('input-dept').value.trim();
-            const jobPosition = document.getElementById('input-pos').value.trim();
+            const pin = document.getElementById('input-pin').value.trim();
 
-            if (!employeeId || !fullName || !organization || !jobPosition) {
-                showToast('Harap lengkapi Employee ID, Full Name, Organization, dan Job Position.', 'error');
+            if (!employeeId || !pin) {
+                showToast('Harap isi Employee ID dan PIN Akses Anda.', 'error');
                 return;
             }
 
-            appState.profile = { employeeId, fullName, organization, jobPosition };
-            localStorage.setItem(STORAGE_KEYS.PROFILE, JSON.stringify(appState.profile));
-            renderProfile();
-            renderTodaySummary();
-            closeProfileModal();
-            showToast(`Profil ${fullName} berhasil disimpan.`, 'success');
+            const btn = document.getElementById('btn-verify-login');
+            btn.disabled = true;
+            btn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i><span>Memverifikasi Akun...</span>`;
+            lucide.createIcons();
+
+            // Jika URL Google Apps Script sudah terhubung, verifikasi langsung ke Master_Employees
+            if (appState.config.gsheetUrl && appState.config.gsheetUrl.startsWith('https://script.google.com/')) {
+                try {
+                    const response = await fetch(appState.config.gsheetUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                        body: JSON.stringify({
+                            action: 'verify_login',
+                            employeeId: employeeId,
+                            pin: pin
+                        })
+                    });
+                    const resJson = await response.json();
+
+                    if (resJson.status === 'success' && resJson.employee) {
+                        appState.profile = {
+                            employeeId: resJson.employee.employeeId,
+                            pin: pin,
+                            fullName: resJson.employee.fullName,
+                            organization: resJson.employee.organization,
+                            jobPosition: resJson.employee.jobPosition,
+                            verified: true
+                        };
+                        localStorage.setItem(STORAGE_KEYS.PROFILE, JSON.stringify(appState.profile));
+                        renderProfile();
+                        renderTodaySummary();
+                        closeProfileModal();
+                        showToast(`Selamat datang, ${appState.profile.fullName}!`, 'success');
+                    } else {
+                        showToast(resJson.message || 'Employee ID atau PIN tidak terdaftar!', 'error');
+                    }
+                } catch (err) {
+                    console.error('Error verifikasi:', err);
+                    showToast('Gagal terhubung ke server verifikasi Google Sheets.', 'error');
+                }
+            } else {
+                // Mode Demo Lokal (Jika Admin belum menempel URL Web App)
+                if (employeeId === '010120301' && pin === '123456') {
+                    appState.profile = {
+                        employeeId: '010120301',
+                        pin: '123456',
+                        fullName: 'Agung Surya Pratama (Demo)',
+                        organization: 'Sales',
+                        jobPosition: 'Sales Executive',
+                        verified: true
+                    };
+                    localStorage.setItem(STORAGE_KEYS.PROFILE, JSON.stringify(appState.profile));
+                    renderProfile();
+                    renderTodaySummary();
+                    closeProfileModal();
+                    showToast('Login Mode Demo berhasil (Pasang URL Sheets untuk data asli).', 'info');
+                } else {
+                    showToast('URL Google Sheets belum dipasang. Gunakan ID: 010120301 & PIN: 123456 untuk tes.', 'error');
+                }
+            }
+
+            btn.disabled = false;
+            btn.innerHTML = `<i data-lucide="log-in" class="w-4 h-4"></i><span>Verifikasi & Masuk</span>`;
+            lucide.createIcons();
         }
 
         function renderProfile() {
@@ -944,14 +1027,14 @@ function simpanFotoKeDrive(base64Data, empId, fullName, type, dateStr) {
             if (fullName) {
                 document.getElementById('display-emp-name').textContent = fullName;
                 document.getElementById('display-emp-meta').textContent = `ID: ${employeeId} • ${organization}`;
-                document.getElementById('display-emp-pos').textContent = `${jobPosition || '-'}`;
+                document.getElementById('display-emp-pos').textContent = `${jobPosition || '-'} ✓ Terverifikasi`;
                 const initials = fullName.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
                 document.getElementById('emp-avatar').textContent = initials || 'KR';
             } else {
-                document.getElementById('display-emp-name').textContent = 'Klik Ikon Kanan Isi Profil';
+                document.getElementById('display-emp-name').textContent = 'Belum Login (Klik Ikon Kunci)';
                 document.getElementById('display-emp-meta').textContent = 'ID: - • Organization: -';
-                document.getElementById('display-emp-pos').textContent = 'Job Position: -';
-                document.getElementById('emp-avatar').textContent = '?';
+                document.getElementById('display-emp-pos').textContent = 'Status: Menunggu Verifikasi PIN';
+                document.getElementById('emp-avatar').textContent = '🔒';
             }
         }
 
@@ -1177,10 +1260,12 @@ function simpanFotoKeDrive(base64Data, empId, fullName, type, dateStr) {
             if (appState.config.gsheetUrl) {
                 try {
                     const payload = {
+                        action: 'clock_attendance',
+                        employeeId: record.employeeId,
+                        pin: appState.profile.pin,
                         date: record.date,
                         checkTime: record.checkTime,
                         type: record.type,
-                        employeeId: record.employeeId,
                         fullName: record.fullName,
                         organization: record.organization,
                         jobPosition: record.jobPosition,
@@ -1190,13 +1275,21 @@ function simpanFotoKeDrive(base64Data, empId, fullName, type, dateStr) {
                         photo: record.foto
                     };
 
-                    await fetch(appState.config.gsheetUrl, {
+                    const response = await fetch(appState.config.gsheetUrl, {
                         method: 'POST',
-                        mode: 'no-cors',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                         body: JSON.stringify(payload)
                     });
-                    record.synced = true;
+                    const resJson = await response.json();
+                    if (resJson.status === 'success') {
+                        record.synced = true;
+                    } else {
+                        showToast(resJson.message || 'Gagal validasi akun di server.', 'error');
+                        btn.disabled = false;
+                        btn.innerHTML = `<i data-lucide="check-circle-2" class="w-4 h-4"></i><span>Kirim Absensi</span>`;
+                        lucide.createIcons();
+                        return;
+                    }
                 } catch (err) {
                     console.error('Gagal kirim ke Google Sheets:', err);
                     record.synced = false;
